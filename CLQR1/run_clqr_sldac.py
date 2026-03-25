@@ -1,13 +1,12 @@
 import argparse
 import os
 import shutil
-import sys
 
 import numpy as np
 from scipy.io import savemat
 
 from artifact_paths import build_algorithm_artifact_path
-from seed_utils import resolve_experiment_seeds
+from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
 from SLDAC import SLDAC_main
 
 
@@ -44,6 +43,32 @@ ALGORITHM_NAME = "SLDAC"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LEGACY_CHECKPOINT_PREFIX = "episode_"
 LEGACY_CHECKPOINT_SUFFIX = ".pt"
+
+
+# 该入口以 .py 顶部配置为唯一配置源，CLI 仅保留帮助与兼容提示。
+def build_python_config():
+    return {
+        "seed": int(DEFAULT_SEED),
+        "seeds": ",".join(str(int(seed_value)) for seed_value in DEFAULT_SEEDS),
+        "window": int(DEFAULT_WINDOW),
+        "episode": int(DEFAULT_EPISODE),
+        "update_time_per_episode": int(DEFAULT_UPDATE_TIME_PER_EPISODE),
+        "num_update_time": int(DEFAULT_NUM_UPDATE_TIME),
+        "alpha_pow": float(DEFAULT_ALPHA_POW),
+        "beta_pow": float(DEFAULT_BETA_POW),
+        "eta_pow": float(DEFAULT_ETA_POW),
+        "gamma_pow_reward": float(DEFAULT_GAMMA_POW_REWARD),
+        "gamma_pow_cost": float(DEFAULT_GAMMA_POW_COST),
+        "tau_reward": float(DEFAULT_TAU_REWARD),
+        "tau_cost": float(DEFAULT_TAU_COST),
+        "device": str(DEFAULT_DEVICE),
+        "checkpoint_root": str(DEFAULT_CHECKPOINT_ROOT),
+        "checkpoint_interval_episodes": int(DEFAULT_CHECKPOINT_INTERVAL_EPISODES),
+        "save_final_checkpoint": int(DEFAULT_SAVE_FINAL_CHECKPOINT),
+    }
+
+
+PROTECTED_CLI_FIELDS = tuple(build_python_config().keys())
 
 
 def _format_seed_dir(seed):
@@ -142,23 +167,23 @@ def _run_single_seed(args):
 
 def build_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument("--seeds", type=str, default=None)
-    parser.add_argument("--window", type=int, default=DEFAULT_WINDOW)
-    parser.add_argument("--episode", type=int, default=DEFAULT_EPISODE)
-    parser.add_argument("--update_time_per_episode", type=int, default=DEFAULT_UPDATE_TIME_PER_EPISODE)
-    parser.add_argument("--num_update_time", type=int, default=DEFAULT_NUM_UPDATE_TIME)
-    parser.add_argument("--alpha_pow", type=float, default=DEFAULT_ALPHA_POW)
-    parser.add_argument("--beta_pow", type=float, default=DEFAULT_BETA_POW)
-    parser.add_argument("--eta_pow", type=float, default=DEFAULT_ETA_POW)
-    parser.add_argument("--gamma_pow_reward", type=float, default=DEFAULT_GAMMA_POW_REWARD)
-    parser.add_argument("--gamma_pow_cost", type=float, default=DEFAULT_GAMMA_POW_COST)
-    parser.add_argument("--tau_reward", type=float, default=DEFAULT_TAU_REWARD)
-    parser.add_argument("--tau_cost", type=float, default=DEFAULT_TAU_COST)
-    parser.add_argument("--device", type=str, default=DEFAULT_DEVICE)
-    parser.add_argument("--checkpoint_root", type=str, default=DEFAULT_CHECKPOINT_ROOT)
-    parser.add_argument("--checkpoint_interval_episodes", type=int, default=DEFAULT_CHECKPOINT_INTERVAL_EPISODES)
-    parser.add_argument("--save_final_checkpoint", type=int, choices=[0, 1], default=int(DEFAULT_SAVE_FINAL_CHECKPOINT))
+    parser.add_argument("--seed", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--seeds", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--window", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--episode", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--update_time_per_episode", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--num_update_time", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--alpha_pow", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--beta_pow", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--eta_pow", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--gamma_pow_reward", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--gamma_pow_cost", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--tau_reward", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--tau_cost", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--checkpoint_root", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--checkpoint_interval_episodes", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--save_final_checkpoint", type=int, choices=[0, 1], default=argparse.SUPPRESS)
     return parser
 
 
@@ -172,19 +197,16 @@ def main(args):
         _run_single_seed(seed_args)
 
 
-def _apply_direct_run_seed_defaults(args, argv=None):
-    cli_args = sys.argv[1:] if argv is None else list(argv)
-    if cli_args:
-        return args
-
-    args.seed = int(DEFAULT_SEED)
-    args.seeds = _format_seed_list_text(DEFAULT_SEEDS)
-    return args
-
-
 if __name__ == "__main__":
     parser = build_parser()
     cli_args = parser.parse_args()
-    cli_args = _apply_direct_run_seed_defaults(cli_args)
-    _migrate_legacy_checkpoints(cli_args.checkpoint_root, EXAMPLE_NAME, default_seed=DEFAULT_SEED)
-    main(cli_args)
+    args, ignored_options = apply_python_config_priority(
+        cli_args,
+        build_python_config(),
+        PROTECTED_CLI_FIELDS,
+    )
+    ignored_message = format_ignored_cli_overrides(ignored_options)
+    if ignored_message:
+        print(ignored_message)
+    _migrate_legacy_checkpoints(args.checkpoint_root, EXAMPLE_NAME, default_seed=DEFAULT_SEED)
+    main(args)

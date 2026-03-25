@@ -6,7 +6,7 @@ import numpy as np
 from scipy.io import savemat
 
 from artifact_paths import build_algorithm_artifact_path
-from seed_utils import resolve_experiment_seeds
+from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
 from Fused_CPRO import HRL_main, _resolve_sldac_checkpoint_path
 from run_mimo_sldac import _migrate_legacy_checkpoints
 
@@ -44,6 +44,34 @@ DEFAULT_TAU_COST = 1.0
 OLD_POLICY_BQ_LIST = [(100, 1)]
 OLD_POLICY_PRETRAIN_EPISODE = 40
 OLD_POLICY_CHECKPOINT_ROOT = os.path.join(BASE_DIR, "checkpoints", "SLDAC")
+
+
+# 该入口以 .py 顶部配置为唯一配置源，CLI 仅保留帮助与兼容提示。
+def build_python_config():
+    return {
+        "seed": int(DEFAULT_SEED),
+        "seeds": None,
+        "window": int(DEFAULT_WINDOW),
+        "episode": int(DEFAULT_EPISODE),
+        "update_time_per_episode": int(DEFAULT_UPDATE_TIME_PER_EPISODE),
+        "num_update_time": int(DEFAULT_NUM_UPDATE_TIME),
+        "alpha_pow": float(DEFAULT_ALPHA_POW),
+        "beta_actor_pow": float(DEFAULT_BETA_ACTOR_POW),
+        "beta_rho_pow": float(DEFAULT_BETA_RHO_POW),
+        "eta_pow": float(DEFAULT_ETA_POW),
+        "gamma_pow_reward": float(DEFAULT_GAMMA_POW_REWARD),
+        "gamma_pow_cost": float(DEFAULT_GAMMA_POW_COST),
+        "tau_reward": float(DEFAULT_TAU_REWARD),
+        "tau_cost": float(DEFAULT_TAU_COST),
+        "device": str(DEVICE),
+        "old_policies": None,
+        "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
+        "old_policy_pretrain_episode": int(OLD_POLICY_PRETRAIN_EPISODE),
+        "old_policy_checkpoint_root": str(OLD_POLICY_CHECKPOINT_ROOT),
+    }
+
+
+PROTECTED_CLI_FIELDS = tuple(build_python_config().keys())
 
 
 def _build_mat_metadata(args, algorithm, run_tag):
@@ -299,25 +327,25 @@ def _plot_drift_speed(base_dir, output_suffix, drift_history, seed):
 
 def build_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument("--seeds", type=str, default=None)
-    parser.add_argument("--window", type=int, default=DEFAULT_WINDOW)
-    parser.add_argument("--episode", type=int, default=DEFAULT_EPISODE)
-    parser.add_argument("--update_time_per_episode", type=int, default=DEFAULT_UPDATE_TIME_PER_EPISODE)
-    parser.add_argument("--num_update_time", type=int, default=DEFAULT_NUM_UPDATE_TIME)
-    parser.add_argument("--alpha_pow", type=float, default=DEFAULT_ALPHA_POW)
-    parser.add_argument("--beta_actor_pow", type=float, default=None)
-    parser.add_argument("--beta_rho_pow", type=float, default=None)
-    parser.add_argument("--eta_pow", type=float, default=DEFAULT_ETA_POW)
-    parser.add_argument("--gamma_pow_reward", type=float, default=DEFAULT_GAMMA_POW_REWARD)
-    parser.add_argument("--gamma_pow_cost", type=float, default=DEFAULT_GAMMA_POW_COST)
-    parser.add_argument("--tau_reward", type=float, default=DEFAULT_TAU_REWARD)
-    parser.add_argument("--tau_cost", type=float, default=DEFAULT_TAU_COST)
-    parser.add_argument("--device", type=str, default=DEVICE)
-    parser.add_argument("--old-policies", type=str, default=None)
-    parser.add_argument("--old-policy-seed", type=int, default=DEFAULT_OLD_POLICY_SEED)
-    parser.add_argument("--old-policy-pretrain-episode", type=int, default=None)
-    parser.add_argument("--old-policy-checkpoint-root", type=str, default=None)
+    parser.add_argument("--seed", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--seeds", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--window", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--episode", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--update_time_per_episode", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--num_update_time", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--alpha_pow", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--beta_actor_pow", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--beta_rho_pow", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--eta_pow", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--gamma_pow_reward", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--gamma_pow_cost", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--tau_reward", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--tau_cost", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--old-policies", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--old-policy-seed", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--old-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--old-policy-checkpoint-root", type=str, default=argparse.SUPPRESS)
     return parser
 
 
@@ -390,7 +418,15 @@ def _run_single_seed(args):
 
 def main():
     parser = build_parser()
-    args = parser.parse_args()
+    cli_args = parser.parse_args()
+    args, ignored_options = apply_python_config_priority(
+        cli_args,
+        build_python_config(),
+        PROTECTED_CLI_FIELDS,
+    )
+    ignored_message = format_ignored_cli_overrides(ignored_options)
+    if ignored_message:
+        print(ignored_message)
     args = _finalize_actor_rho_powers(args)
     args = _resolve_old_policy_args(args)
     _migrate_legacy_checkpoints(args.checkpoint_root, EXAMPLE_NAME, default_seed=DEFAULT_OLD_POLICY_SEED)

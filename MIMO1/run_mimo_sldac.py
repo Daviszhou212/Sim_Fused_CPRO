@@ -1,13 +1,12 @@
 import argparse
 import os
 import shutil
-import sys
 
 import numpy as np
 from scipy.io import savemat
 
 from artifact_paths import build_algorithm_artifact_path
-from seed_utils import resolve_experiment_seeds
+from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
 from SLDAC import SLDAC_main
 
 
@@ -21,9 +20,6 @@ SLDAC_RUNS = [
 ]
 
 DEFAULT_SEED = 1
-DEFAULT_SEEDS = (1, 2, 3, 4)
-# 默认批量实验 seed 列表；未传 --seeds 时仍按单个 --seed 兼容运行。
-DEFAULT_SEEDS = (DEFAULT_SEED,)
 DEFAULT_SEEDS = (1, 2, 3, 4)
 ALGORITHM_NAME = "SLDAC"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -169,56 +165,75 @@ checkpoint_root = "checkpoints/SLDAC"
 checkpoint_interval_episodes = 10
 save_final_checkpoint = True
 
+
+# 该入口以 .py 顶部配置为唯一配置源，CLI 仅保留帮助与兼容提示。
+def build_python_config():
+    return {
+        "seed": int(seed),
+        "seeds": _format_seed_list_text(DEFAULT_SEEDS),
+        "T": int(T),
+        "grad_T": int(grad_T),
+        "window": int(window),
+        "num_new_data": int(num_new_data),
+        "episode": int(episode),
+        "update_time_per_episode": int(update_time_per_episode),
+        "num_update_time": int(num_update_time),
+        "Q_update_time": int(Q_update_time),
+        "MAX_STEPS": int(MAX_STEPS),
+        "alpha_pow": float(alpha_pow),
+        "beta_pow": float(beta_pow),
+        "eta_pow": float(eta_pow),
+        "gamma_pow_reward": float(gamma_pow_reward),
+        "gamma_pow_cost": float(gamma_pow_cost),
+        "tau_reward": float(tau_reward),
+        "tau_cost": float(tau_cost),
+        "device": str(device),
+        "checkpoint_root": str(checkpoint_root),
+        "checkpoint_interval_episodes": int(checkpoint_interval_episodes),
+        "save_final_checkpoint": int(save_final_checkpoint),
+    }
+
+
+PROTECTED_CLI_FIELDS = tuple(build_python_config().keys())
+
+
 def build_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=seed)
-    parser.add_argument("--seeds", type=str, default=None)
-    parser.add_argument("--T", type=int, default=T)
-    parser.add_argument("--grad_T", type=int, default=grad_T)
-    parser.add_argument("--window", type=int, default=window)
-    parser.add_argument("--num_new_data", type=int, default=num_new_data)
-    parser.add_argument("--episode", type=int, default=episode)
-    parser.add_argument("--update_time_per_episode", type=int, default=update_time_per_episode)
-    parser.add_argument("--num_update_time", type=int, default=num_update_time)
-    parser.add_argument("--Q_update_time", type=int, default=Q_update_time)
-    parser.add_argument("--MAX_STEPS", type=int, default=MAX_STEPS)
-    parser.add_argument("--alpha_pow", type=float, default=alpha_pow)
-    parser.add_argument("--beta_pow", type=float, default=beta_pow)
-    parser.add_argument("--eta_pow", type=float, default=eta_pow)
-    parser.add_argument("--gamma_pow_reward", type=float, default=gamma_pow_reward)
-    parser.add_argument("--gamma_pow_cost", type=float, default=gamma_pow_cost)
-    parser.add_argument("--tau_reward", type=float, default=tau_reward)
-    parser.add_argument("--tau_cost", type=float, default=tau_cost)
-    parser.add_argument("--device", type=str, default=device)
-    parser.add_argument("--checkpoint_root", type=str, default=checkpoint_root)
-    parser.add_argument("--checkpoint_interval_episodes", type=int, default=checkpoint_interval_episodes)
-    parser.add_argument("--save_final_checkpoint", type=int, choices=[0, 1], default=int(save_final_checkpoint))
+    parser.add_argument("--seed", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--seeds", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--T", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--grad_T", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--window", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--num_new_data", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--episode", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--update_time_per_episode", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--num_update_time", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--Q_update_time", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--MAX_STEPS", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--alpha_pow", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--beta_pow", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--eta_pow", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--gamma_pow_reward", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--gamma_pow_cost", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--tau_reward", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--tau_cost", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--checkpoint_root", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--checkpoint_interval_episodes", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--save_final_checkpoint", type=int, choices=[0, 1], default=argparse.SUPPRESS)
     return parser
-
-
-def _apply_direct_run_seed_defaults(args, argv=None):
-    cli_args = sys.argv[1:] if argv is None else list(argv)
-    normalized_args = [str(item).strip() for item in cli_args]
-    has_explicit_seed_override = any(
-        (item == "--seed")
-        or item.startswith("--seed=")
-        or (item == "--seeds")
-        or item.startswith("--seeds=")
-        for item in normalized_args
-    )
-    if has_explicit_seed_override:
-        return args
-
-    # 兼容直接运行 .py 文件的工作流：无 CLI 参数时按代码顶部配置的批量 seed 执行。
-    args.seed = int(DEFAULT_SEED)
-    args.seed = int(DEFAULT_SEED)
-    args.seeds = _format_seed_list_text(DEFAULT_SEEDS)
-    return args
 
 
 if __name__ == "__main__":
     parser = build_parser()
-    args = parser.parse_args()
-    args = _apply_direct_run_seed_defaults(args)
+    cli_args = parser.parse_args()
+    args, ignored_options = apply_python_config_priority(
+        cli_args,
+        build_python_config(),
+        PROTECTED_CLI_FIELDS,
+    )
+    ignored_message = format_ignored_cli_overrides(ignored_options)
+    if ignored_message:
+        print(ignored_message)
     _migrate_legacy_checkpoints(args.checkpoint_root, example_name, default_seed=DEFAULT_SEED)
     main(args, example_name)

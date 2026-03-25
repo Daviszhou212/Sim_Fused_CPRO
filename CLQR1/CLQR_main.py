@@ -1,4 +1,4 @@
-import os
+import re
 from pathlib import Path
 
 import matplotlib
@@ -12,10 +12,10 @@ from scipy.io import loadmat
 from artifact_paths import build_compare_artifact_path, resolve_algorithm_artifact_path
 
 
-# 绘图配置：固定读取 CLQR1 当前主线结果，输出 IEEE 风格图片。
 BASE_DIR = Path(__file__).resolve().parent
+
+# 绘图结果配置：优先读取带指定 seed 后缀的 mat 文件，并控制输出文件名前缀。
 PREFERRED_SEED = 0
-FUSED_RUN_TAG = "default"
 OUTPUT_PREFIX = f"CLQR_seed{PREFERRED_SEED}_algorithms_compare"
 
 # 物理量配置：objective 表示待最小化的平均目标代价，cost 表示约束代价。
@@ -23,6 +23,74 @@ CONSTRAINT_LIMIT = 380.0
 OBJECTIVE_LABEL = "Objective cost (avg. quadratic objective)"
 COST_LABEL = "Constraint cost (avg. quadratic constraint)"
 REUSE_LABEL = "Policy reuse probability"
+
+# 绘图目标配置：直接在这里增删曲线即可，不依赖 CLI。
+PLOT_SERIES = [
+    {
+        "label": "Fused-CPRO",
+        "artifact_group": "Fused_CPRO",
+        "reward_stem": "Fused_CPRO_reward_default.mat",
+        "cost_stem": "Fused_CPRO_cost_default.mat",
+        "rho_stem": "Fused_CPRO_rho_default.mat",
+        "color": "#0072B2",
+        "marker": "o",
+        "prefer_seed_suffix": True,
+    },
+    {
+        "label": "HRL",
+        "artifact_group": "HRL",
+        "reward_stem": "HRL_reward_default.mat",
+        "cost_stem": "HRL_cost_default.mat",
+        "color": "#E69F00",
+        "marker": "P",
+        "prefer_seed_suffix": True,
+    },
+    {
+        "label": "SLDAC-q5",
+        "artifact_group": "SLDAC",
+        "reward_stem": "SLDAC_reward_b100_q5.mat",
+        "cost_stem": "SLDAC_cost_b100_q5.mat",
+        "color": "#56B4E9",
+        "marker": "s",
+        "prefer_seed_suffix": True,
+    },
+    {
+        "label": "ACPO",
+        "artifact_group": "ACPO",
+        "reward_stem": "ACPO_reward_b250.mat",
+        "cost_stem": "ACPO_cost_b250.mat",
+        "color": "#4D4D4D",
+        "marker": "*",
+        "prefer_seed_suffix": True,
+    },
+    {
+        "label": "SCAOPO",
+        "artifact_group": "SCAOPO",
+        "reward_stem": "SCAOPO_reward_100.mat",
+        "cost_stem": "SCAOPO_cost_100.mat",
+        "color": "#64B5CD",
+        "marker": "v",
+        "prefer_seed_suffix": False,
+    },
+    # {
+    #     "label": "PPO-100",
+    #     "artifact_group": "ppo",
+    #     "reward_stem": "reward_ppo_100.mat",
+    #     "cost_stem": "cost_ppo_100.mat",
+    #     "color": "#8172B2",
+    #     "marker": "<",
+    #     "prefer_seed_suffix": False,
+    # },
+    {
+        "label": "CPO-100",
+        "artifact_group": "cpo",
+        "reward_stem": "reward_cpo_100.mat",
+        "cost_stem": "cost_cpo_100.mat",
+        "color": "#7E2F8E",
+        "marker": ">",
+        "prefer_seed_suffix": False,
+    },
+]
 
 # 科研绘图样式：与 MIMO1 保持一致的 IEEE 风格。
 FIG_WIDTH = 3.55
@@ -33,35 +101,23 @@ REFERENCE_LINE_WIDTH = 1.15
 MARKER_SIZE = 5.0
 MARK_EVERY = 6
 
-ALGO_COLORS = {
-    "Fused-CPRO": "#0072B2",
-    "HRL": "#E69F00",
-    "SLDAC-no reuse": "#009E73",
-    "SLDAC-q1": "#56B4E9",
-    "SLDAC-q5": "#CC79A7",
-    "SLDAC-q10": "#D55E00",
-    "ACPO": "#4D4D4D",
-    "SCAOPO-500": "#64B5CD",
-    "PPO-100": "#8172B2",
-    "CPO-100": "#7E2F8E",
-}
-ALGO_MARKERS = {
-    "Fused-CPRO": "o",
-    "HRL": "P",
-    "SLDAC-no reuse": "^",
-    "SLDAC-q1": "s",
-    "SLDAC-q5": "D",
-    "SLDAC-q10": "X",
-    "ACPO": "*",
-    "SCAOPO-500": "v",
-    "PPO-100": "<",
-    "CPO-100": ">",
-}
 REUSE_COLORS = {
     "New policy": "#000000",
     "DK policy": "#009E73",
     "Old policy": "#CC79A7",
 }
+
+SERIES_REQUIRED_KEYS = (
+    "label",
+    "artifact_group",
+    "reward_stem",
+    "cost_stem",
+    "color",
+    "marker",
+    "prefer_seed_suffix",
+)
+SERIES_OPTIONAL_KEYS = ("rho_stem",)
+SEED_SUFFIX_PATTERN = re.compile(r"_seed\d+$")
 
 
 def _apply_ieee_style():
@@ -95,6 +151,10 @@ def _apply_ieee_style():
     )
 
 
+def _series_label(series_config):
+    return str(series_config["label"]).strip()
+
+
 def _load_curve(mat_path):
     data = loadmat(mat_path)
     return np.asarray(data["array"], dtype=np.float64).reshape(-1)
@@ -124,27 +184,90 @@ def _load_reuse_history(mat_path):
     return new_policy, dk_policy, old_policy
 
 
-def _resolve_algorithm_mat_path(algorithm_name, stem):
-    stem_path = Path(stem)
-    candidates = [
-        "{0}_seed{1}{2}".format(stem_path.stem, PREFERRED_SEED, stem_path.suffix),
-        str(stem),
-    ]
+def _build_seed_preferred_stem(stem):
+    stem_path = Path(str(stem))
+    if SEED_SUFFIX_PATTERN.search(stem_path.stem):
+        return str(stem_path)
+    return "{0}_seed{1}{2}".format(stem_path.stem, PREFERRED_SEED, stem_path.suffix)
+
+
+def _validate_plot_series_config(plot_series):
+    if not plot_series:
+        raise ValueError("PLOT_SERIES must contain at least one plotting series.")
+
+    labels = set()
+    reuse_series = []
+
+    for idx, series_config in enumerate(plot_series):
+        if not isinstance(series_config, dict):
+            raise TypeError("PLOT_SERIES[{0}] must be a dict.".format(idx))
+
+        missing_keys = [key for key in SERIES_REQUIRED_KEYS if key not in series_config]
+        if missing_keys:
+            raise KeyError(
+                "PLOT_SERIES[{0}] is missing keys: {1}".format(idx, ", ".join(missing_keys))
+            )
+
+        unknown_keys = sorted(set(series_config.keys()) - set(SERIES_REQUIRED_KEYS) - set(SERIES_OPTIONAL_KEYS))
+        if unknown_keys:
+            raise KeyError(
+                "PLOT_SERIES[{0}] contains unsupported keys: {1}".format(idx, ", ".join(unknown_keys))
+            )
+
+        label = _series_label(series_config)
+        if not label:
+            raise ValueError("PLOT_SERIES[{0}] label must be non-empty.".format(idx))
+        if label in labels:
+            raise ValueError("Duplicate plot label detected in PLOT_SERIES: {0}".format(label))
+        labels.add(label)
+
+        for key in ("artifact_group", "color", "marker"):
+            if not str(series_config[key]).strip():
+                raise ValueError("PLOT_SERIES[{0}] field {1} must be non-empty.".format(idx, key))
+
+        for key in ("reward_stem", "cost_stem"):
+            if Path(str(series_config[key])).suffix.lower() != ".mat":
+                raise ValueError("PLOT_SERIES[{0}] field {1} must point to a .mat file.".format(idx, key))
+
+        if not isinstance(series_config["prefer_seed_suffix"], bool):
+            raise TypeError("PLOT_SERIES[{0}] field prefer_seed_suffix must be bool.".format(idx))
+
+        rho_stem = series_config.get("rho_stem")
+        if rho_stem is not None:
+            if Path(str(rho_stem)).suffix.lower() != ".mat":
+                raise ValueError("PLOT_SERIES[{0}] field rho_stem must point to a .mat file.".format(idx))
+            if str(series_config["artifact_group"]).strip() != "Fused_CPRO":
+                raise ValueError("Only Fused_CPRO series may define rho_stem. Invalid label: {0}".format(label))
+            reuse_series.append(series_config)
+
+    if len(reuse_series) > 1:
+        labels_text = ", ".join(_series_label(series_config) for series_config in reuse_series)
+        raise ValueError(
+            "PLOT_SERIES may contain at most one reuse source with rho_stem. got: {0}".format(labels_text)
+        )
+    return reuse_series[0] if reuse_series else None
+
+
+def _resolve_series_mat_path(series_config, stem_key):
+    artifact_group = str(series_config["artifact_group"])
+    stem = str(series_config[stem_key])
+    candidates = []
+    if bool(series_config["prefer_seed_suffix"]):
+        candidates.append(_build_seed_preferred_stem(stem))
+    candidates.append(stem)
+
+    last_error = None
     for candidate in candidates:
         try:
-            return Path(resolve_algorithm_artifact_path(str(BASE_DIR), algorithm_name, candidate))
-        except FileNotFoundError:
+            return Path(resolve_algorithm_artifact_path(str(BASE_DIR), artifact_group, candidate))
+        except FileNotFoundError as exc:
+            last_error = exc
             continue
+
+    label = _series_label(series_config)
     raise FileNotFoundError(
-        "mat file not found for algorithm={0}: {1}".format(
-            algorithm_name,
-            stem,
-        )
-    )
-
-
-def _resolve_baseline_mat_path(algorithm_name, stem):
-    return Path(resolve_algorithm_artifact_path(str(BASE_DIR), algorithm_name, stem))
+        "artifact not found for plot series {0!r}, field {1}: {2}".format(label, stem_key, stem)
+    ) from last_error
 
 
 def _try_load_curve(path_getter):
@@ -196,14 +319,14 @@ def _truncate_plot_series(*series):
 def _plot_algorithm_curves(ax, curves):
     common_length = _resolve_shortest_curve_length(curves)
     episodes = np.arange(1, common_length + 1, dtype=np.int32)
-    for label, values in curves:
+    for series_config, values in curves:
         ax.plot(
             episodes,
             values[:common_length],
-            color=ALGO_COLORS[label],
-            marker=ALGO_MARKERS[label],
+            color=str(series_config["color"]),
+            marker=str(series_config["marker"]),
             markevery=MARK_EVERY,
-            label=label,
+            label=_series_label(series_config),
         )
     return common_length
 
@@ -241,7 +364,7 @@ def _plot_cost(curves):
     return _save_figure(fig, f"{OUTPUT_PREFIX}_cost_ieee")
 
 
-def _plot_reuse(episodes, new_policy, dk_policy, old_policy):
+def _plot_reuse(series_label, episodes, new_policy, dk_policy, old_policy):
     common_length, (episodes, new_policy, dk_policy, old_policy) = _truncate_plot_series(
         episodes,
         new_policy,
@@ -277,72 +400,31 @@ def _plot_reuse(episodes, new_policy, dk_policy, old_policy):
     ax.set_ylabel(REUSE_LABEL)
     ax.set_xlim(1, common_length)
     ax.set_ylim(0.0, 1.0)
-    ax.set_title("Fused-CPRO policy mixing weights")
+    ax.set_title("{0} policy mixing weights".format(series_label))
     ax.legend(loc="center right")
     _style_axis(ax)
     fig.tight_layout(pad=0.4)
     return _save_figure(fig, f"{OUTPUT_PREFIX}_reuse_ieee")
 
 
-def _append_curve_if_present(curves, label, values):
-    if values is not None:
-        curves.append((label, values))
-
-
 def main():
     _apply_ieee_style()
+    reuse_series = _validate_plot_series_config(PLOT_SERIES)
 
     objective_curves = []
     cost_curves = []
 
-    fused_reward = _try_load_curve(
-        lambda: _resolve_algorithm_mat_path("Fused_CPRO", f"Fused_CPRO_reward_{FUSED_RUN_TAG}.mat")
-    )
-    fused_cost = _try_load_curve(
-        lambda: _resolve_algorithm_mat_path("Fused_CPRO", f"Fused_CPRO_cost_{FUSED_RUN_TAG}.mat")
-    )
-    _append_curve_if_present(objective_curves, "Fused-CPRO", fused_reward)
-    _append_curve_if_present(cost_curves, "Fused-CPRO", fused_cost)
-
-    hrl_reward = _try_load_curve(lambda: _resolve_algorithm_mat_path("HRL", f"HRL_reward_{FUSED_RUN_TAG}.mat"))
-    hrl_cost = _try_load_curve(lambda: _resolve_algorithm_mat_path("HRL", f"HRL_cost_{FUSED_RUN_TAG}.mat"))
-    _append_curve_if_present(objective_curves, "HRL", hrl_reward)
-    _append_curve_if_present(cost_curves, "HRL", hrl_cost)
-
-    sldac_specs = [
-        ("SLDAC-q1", "b100_q1"),
-    ]
-    for label, run_tag in sldac_specs:
+    for series_config in PLOT_SERIES:
         reward_curve = _try_load_curve(
-            lambda run_tag=run_tag: _resolve_algorithm_mat_path("SLDAC", f"SLDAC_reward_{run_tag}.mat")
+            lambda series_config=series_config: _resolve_series_mat_path(series_config, "reward_stem")
         )
         cost_curve = _try_load_curve(
-            lambda run_tag=run_tag: _resolve_algorithm_mat_path("SLDAC", f"SLDAC_cost_{run_tag}.mat")
+            lambda series_config=series_config: _resolve_series_mat_path(series_config, "cost_stem")
         )
         if reward_curve is None or cost_curve is None:
             continue
-        objective_curves.append((label, reward_curve))
-        cost_curves.append((label, cost_curve))
-
-    acpo_reward = _try_load_curve(lambda: _resolve_algorithm_mat_path("ACPO", "ACPO_reward_b250.mat"))
-    acpo_cost = _try_load_curve(lambda: _resolve_algorithm_mat_path("ACPO", "ACPO_cost_b250.mat"))
-    _append_curve_if_present(objective_curves, "ACPO", acpo_reward)
-    _append_curve_if_present(cost_curves, "ACPO", acpo_cost)
-
-    scaopo_reward = _try_load_curve(lambda: _resolve_baseline_mat_path("SCAOPO", "SCAOPO_reward_500.mat"))
-    scaopo_cost = _try_load_curve(lambda: _resolve_baseline_mat_path("SCAOPO", "SCAOPO_cost_500.mat"))
-    _append_curve_if_present(objective_curves, "SCAOPO-500", scaopo_reward)
-    _append_curve_if_present(cost_curves, "SCAOPO-500", scaopo_cost)
-
-    ppo_reward = _try_load_curve(lambda: _resolve_baseline_mat_path("ppo", "reward_ppo_100.mat"))
-    ppo_cost = _try_load_curve(lambda: _resolve_baseline_mat_path("ppo", "cost_ppo_100.mat"))
-    _append_curve_if_present(objective_curves, "PPO-100", ppo_reward)
-    _append_curve_if_present(cost_curves, "PPO-100", ppo_cost)
-
-    cpo_reward = _try_load_curve(lambda: _resolve_baseline_mat_path("cpo", "reward_cpo_100.mat"))
-    cpo_cost = _try_load_curve(lambda: _resolve_baseline_mat_path("cpo", "cost_cpo_100.mat"))
-    _append_curve_if_present(objective_curves, "CPO-100", cpo_reward)
-    _append_curve_if_present(cost_curves, "CPO-100", cpo_cost)
+        objective_curves.append((series_config, reward_curve))
+        cost_curves.append((series_config, cost_curve))
 
     if not objective_curves or not cost_curves:
         raise FileNotFoundError("no CLQR curves were found in outputs or legacy root.")
@@ -351,12 +433,13 @@ def main():
     outputs.extend(_plot_objective(objective_curves))
     outputs.extend(_plot_cost(cost_curves))
 
-    reuse_data = _try_load_reuse_history(
-        lambda: _resolve_algorithm_mat_path("Fused_CPRO", f"Fused_CPRO_rho_{FUSED_RUN_TAG}.mat")
-    )
-    if reuse_data is not None and fused_reward is not None:
-        episodes = np.arange(1, len(fused_reward) + 1, dtype=np.int32)
-        outputs.extend(_plot_reuse(episodes, *reuse_data))
+    if reuse_series is not None:
+        reuse_data = _try_load_reuse_history(
+            lambda: _resolve_series_mat_path(reuse_series, "rho_stem")
+        )
+        if reuse_data is not None:
+            episodes = np.arange(1, len(reuse_data[0]) + 1, dtype=np.int32)
+            outputs.extend(_plot_reuse(_series_label(reuse_series), episodes, *reuse_data))
 
     for path in outputs:
         print(path)

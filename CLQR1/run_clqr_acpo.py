@@ -6,7 +6,7 @@ from scipy.io import savemat
 
 from ACPO import ACPO_main
 from artifact_paths import build_algorithm_artifact_path
-from seed_utils import resolve_experiment_seeds
+from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
 
 
 EXAMPLE_NAME = "CLQR"
@@ -19,7 +19,7 @@ DEFAULT_SEEDS = (DEFAULT_SEED,)
 DEFAULT_DEVICE = "cpu"
 DEFAULT_STATE_DIM = 15
 DEFAULT_ACTION_DIM = 4
-DEFAULT_T = 250
+DEFAULT_T = 500
 DEFAULT_EPISODE = 101
 DEFAULT_CONSTRAINT_LIMIT = 380.0
 DEFAULT_GAE_LAMBDA_REWARD = 0.95
@@ -38,6 +38,34 @@ DEFAULT_INIT_LOG_STD = -1.0
 ACPO_RUNS = [
     ("b250", "ACPO, batchsize=250", DEFAULT_T),
 ]
+
+# 该入口以 .py 顶部配置为唯一配置源，CLI 仅保留帮助与兼容提示。
+def build_python_config():
+    return {
+        "seed": int(DEFAULT_SEED),
+        "seeds": None,
+        "device": str(DEFAULT_DEVICE),
+        "state_dim": int(DEFAULT_STATE_DIM),
+        "action_dim": int(DEFAULT_ACTION_DIM),
+        "T": int(DEFAULT_T),
+        "episode": int(DEFAULT_EPISODE),
+        "constraint_limit": float(DEFAULT_CONSTRAINT_LIMIT),
+        "gae_lambda_reward": float(DEFAULT_GAE_LAMBDA_REWARD),
+        "gae_lambda_cost": float(DEFAULT_GAE_LAMBDA_COST),
+        "delta": float(DEFAULT_DELTA),
+        "backtrack_coeff": float(DEFAULT_BACKTRACK_COEFF),
+        "max_backtracks": int(DEFAULT_MAX_BACKTRACKS),
+        "cg_iters": int(DEFAULT_CG_ITERS),
+        "cg_damping": float(DEFAULT_CG_DAMPING),
+        "recovery_t": float(DEFAULT_RECOVERY_T),
+        "vf_lr": float(DEFAULT_VF_LR),
+        "vf_epochs": int(DEFAULT_VF_EPOCHS),
+        "vf_batch_size": int(DEFAULT_VF_BATCH_SIZE),
+        "init_log_std": float(DEFAULT_INIT_LOG_STD),
+    }
+
+
+PROTECTED_CLI_FIELDS = tuple(build_python_config().keys())
 
 
 def _build_mat_metadata(args, run_tag):
@@ -94,29 +122,38 @@ def main(args):
 
 def build_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument("--seeds", type=str, default=None)
-    parser.add_argument("--device", type=str, default=DEFAULT_DEVICE)
-    parser.add_argument("--state_dim", type=int, default=DEFAULT_STATE_DIM)
-    parser.add_argument("--action_dim", type=int, default=DEFAULT_ACTION_DIM)
-    parser.add_argument("--T", type=int, default=DEFAULT_T)
-    parser.add_argument("--episode", type=int, default=DEFAULT_EPISODE)
-    parser.add_argument("--constraint_limit", type=float, default=DEFAULT_CONSTRAINT_LIMIT)
-    parser.add_argument("--gae_lambda_reward", type=float, default=DEFAULT_GAE_LAMBDA_REWARD)
-    parser.add_argument("--gae_lambda_cost", type=float, default=DEFAULT_GAE_LAMBDA_COST)
-    parser.add_argument("--delta", type=float, default=DEFAULT_DELTA)
-    parser.add_argument("--backtrack_coeff", type=float, default=DEFAULT_BACKTRACK_COEFF)
-    parser.add_argument("--max_backtracks", type=int, default=DEFAULT_MAX_BACKTRACKS)
-    parser.add_argument("--cg_iters", type=int, default=DEFAULT_CG_ITERS)
-    parser.add_argument("--cg_damping", type=float, default=DEFAULT_CG_DAMPING)
-    parser.add_argument("--recovery_t", type=float, default=DEFAULT_RECOVERY_T)
-    parser.add_argument("--vf_lr", type=float, default=DEFAULT_VF_LR)
-    parser.add_argument("--vf_epochs", type=int, default=DEFAULT_VF_EPOCHS)
-    parser.add_argument("--vf_batch_size", type=int, default=DEFAULT_VF_BATCH_SIZE)
-    parser.add_argument("--init_log_std", type=float, default=DEFAULT_INIT_LOG_STD)
+    parser.add_argument("--seed", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--seeds", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--state_dim", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--action_dim", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--T", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--episode", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--constraint_limit", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--gae_lambda_reward", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--gae_lambda_cost", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--delta", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--backtrack_coeff", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--max_backtracks", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--cg_iters", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--cg_damping", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--recovery_t", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--vf_lr", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--vf_epochs", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--vf_batch_size", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--init_log_std", type=float, default=argparse.SUPPRESS)
     return parser
 
 
 if __name__ == "__main__":
     parser = build_parser()
-    main(parser.parse_args())
+    cli_args = parser.parse_args()
+    args, ignored_options = apply_python_config_priority(
+        cli_args,
+        build_python_config(),
+        PROTECTED_CLI_FIELDS,
+    )
+    ignored_message = format_ignored_cli_overrides(ignored_options)
+    if ignored_message:
+        print(ignored_message)
+    main(args)
