@@ -1,0 +1,10 @@
+# Python 缓存与编译产物
+*.pyc
+**/__pycache__/
+
+# 本地编辑器配置
+.vscode/
+**/.vscode/
+
+# 临时目录
+**/Trash/
