@@ -844,8 +844,9 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
                 reward_average_save.append(float(np.mean(aver_reward_buffer)))
                 cost_average_save.append(float(np.mean(aver_cost_buffer)))
                 rho_history_save.append(np.asarray(rho, dtype=np.float64).copy())
-                xi_history_save.append(float(xi))
-                print("xi:", float(xi))
+                if use_offline_data:
+                    xi_history_save.append(float(xi))
+                    print("xi:", float(xi))
                 print_index += 1
 
             online_state_batch = state_buffer[(2 * t_horizon - grad_t):2 * t_horizon]

@@ -251,7 +251,7 @@ def _apply_run_config(args, output_suffix, message, t_horizon, grad_t, num_new_d
     return args
 
 
-def _plot_reuse_probability(base_dir, output_suffix, rho_history, rho_labels, xi_history, seed):
+def _plot_reuse_probability(base_dir, output_suffix, rho_history, rho_labels, seed):
     if rho_history.size == 0:
         return
     out_path = build_algorithm_artifact_path(
@@ -260,19 +260,15 @@ def _plot_reuse_probability(base_dir, output_suffix, rho_history, rho_labels, xi
         "HRL_reuse_prob_{0}_seed{1}.png".format(output_suffix, int(seed)),
     )
     x = np.arange(1, rho_history.shape[0] + 1)
-    fig, axes = plt.subplots(2, 1, figsize=(9, 7), sharex=True)
+    fig, ax = plt.subplots(1, 1, figsize=(9, 4.6))
 
     for idx, label in enumerate(rho_labels):
-        axes[0].plot(x, rho_history[:, idx], linewidth=2.0, label=label)
-    axes[0].set_ylabel("Reuse probability")
-    axes[0].set_title("HRL reuse probabilities: {0}".format(output_suffix))
-    axes[0].grid(alpha=0.25)
-    axes[0].legend(frameon=False, ncol=2)
-
-    axes[1].plot(x, xi_history, color="#222222", linewidth=2.0)
-    axes[1].set_xlabel("Episode")
-    axes[1].set_ylabel("xi")
-    axes[1].grid(alpha=0.25)
+        ax.plot(x, rho_history[:, idx], linewidth=2.0, label=label)
+    ax.set_xlabel("Episode")
+    ax.set_ylabel("Reuse probability")
+    ax.set_title("HRL reuse probabilities: {0}".format(output_suffix))
+    ax.grid(alpha=0.25)
+    ax.legend(frameon=False, ncol=2)
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
@@ -361,7 +357,7 @@ def _run_single_seed(args):
             num_new_data_run,
             q_update_time,
         )
-        reward_save, cost_save, rho_history, xi_history, rho_labels, drift_history = HRL_main(
+        reward_save, cost_save, rho_history, _, rho_labels, drift_history = HRL_main(
             run_args, EXAMPLE_NAME
         )
         _save_mat_with_seed(
@@ -395,7 +391,6 @@ def _run_single_seed(args):
             {
                 "array": rho_history,
                 "labels": np.asarray(rho_labels, dtype="U32"),
-                "xi": xi_history,
             },
             run_args,
             "HRL",
@@ -412,7 +407,7 @@ def _run_single_seed(args):
             "HRL",
             output_suffix,
         )
-        _plot_reuse_probability(BASE_DIR, output_suffix, rho_history, rho_labels, xi_history, run_args.seed)
+        _plot_reuse_probability(BASE_DIR, output_suffix, rho_history, rho_labels, run_args.seed)
         _plot_drift_speed(BASE_DIR, output_suffix, drift_history, run_args.seed)
 
 

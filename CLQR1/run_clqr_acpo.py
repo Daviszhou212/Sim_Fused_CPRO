@@ -1,5 +1,6 @@
 import argparse
 import os
+from collections import Counter
 
 import numpy as np
 from scipy.io import savemat
@@ -34,9 +35,10 @@ DEFAULT_VF_LR = 2e-4
 DEFAULT_VF_EPOCHS = 20
 DEFAULT_VF_BATCH_SIZE = 256
 DEFAULT_INIT_LOG_STD = -1.0
+DEFAULT_FINAL_SUMMARY_TAIL = 20
 
 ACPO_RUNS = [
-    ("b250", "ACPO, batchsize=250", DEFAULT_T),
+    ("b500", "ACPO, T=500, batchsize=500", DEFAULT_T),
 ]
 
 # 该入口以 .py 顶部配置为唯一配置源，CLI 仅保留帮助与兼容提示。
@@ -84,11 +86,65 @@ def _save_mat_with_seed(path, payload, args, run_tag):
     savemat("{0}_seed{1}{2}".format(root, seed_value, ext), full_payload)
 
 
+def _format_metric(value, precision=4):
+    numeric = float(value)
+    abs_numeric = abs(numeric)
+    if (abs_numeric >= 1e4) or ((abs_numeric > 0.0) and (abs_numeric < 1e-3)):
+        return "{0:.2e}".format(numeric)
+    return "{0:.{1}f}".format(numeric, int(precision))
+
+
+def _print_run_config(args, run_tag):
+    print(
+        "ACPO config | run_tag={0} | seed={1} | T={2} | episode={3} | constraint_limit={4} | "
+        "delta={5} | gae_lambda_reward={6} | gae_lambda_cost={7} | recovery_t={8} | "
+        "cg_iters={9} | cg_damping={10} | vf_lr={11} | vf_epochs={12} | vf_batch_size={13} | init_log_std={14}".format(
+            str(run_tag),
+            int(getattr(args, "seed", DEFAULT_SEED)),
+            int(getattr(args, "T", DEFAULT_T)),
+            int(getattr(args, "episode", DEFAULT_EPISODE)),
+            _format_metric(getattr(args, "constraint_limit", DEFAULT_CONSTRAINT_LIMIT)),
+            _format_metric(getattr(args, "delta", DEFAULT_DELTA), precision=6),
+            _format_metric(getattr(args, "gae_lambda_reward", DEFAULT_GAE_LAMBDA_REWARD), precision=6),
+            _format_metric(getattr(args, "gae_lambda_cost", DEFAULT_GAE_LAMBDA_COST), precision=6),
+            _format_metric(getattr(args, "recovery_t", DEFAULT_RECOVERY_T), precision=6),
+            int(getattr(args, "cg_iters", DEFAULT_CG_ITERS)),
+            _format_metric(getattr(args, "cg_damping", DEFAULT_CG_DAMPING), precision=6),
+            _format_metric(getattr(args, "vf_lr", DEFAULT_VF_LR), precision=6),
+            int(getattr(args, "vf_epochs", DEFAULT_VF_EPOCHS)),
+            int(getattr(args, "vf_batch_size", DEFAULT_VF_BATCH_SIZE)),
+            _format_metric(getattr(args, "init_log_std", DEFAULT_INIT_LOG_STD), precision=6),
+        )
+    )
+
+
+def _print_run_summary(objective_curve, cost_curve, diagnostics, run_tag):
+    accepted = np.asarray(diagnostics["accepted"], dtype=np.int32).reshape(-1)
+    modes = [str(item).strip() for item in np.asarray(diagnostics["mode"]).reshape(-1)]
+    tail = min(int(DEFAULT_FINAL_SUMMARY_TAIL), len(objective_curve))
+    mode_counts = Counter(modes)
+
+    print(
+        "ACPO summary | run_tag={0} | accepted_rate={1} | normal={2} | recovery={3} | skipped={4} | "
+        "tail{5}_obj={6} | tail{5}_cost={7}".format(
+            str(run_tag),
+            _format_metric(float(np.mean(accepted)) if accepted.size > 0 else 0.0, precision=6),
+            int(mode_counts.get("normal", 0)),
+            int(mode_counts.get("recovery", 0)),
+            int(mode_counts.get("skipped", 0)),
+            int(tail),
+            _format_metric(float(np.mean(objective_curve[-tail:])) if tail > 0 else 0.0),
+            _format_metric(float(np.mean(cost_curve[-tail:])) if tail > 0 else 0.0),
+        )
+    )
+
+
 def _run_single_seed(args):
     for run_tag, message, horizon in ACPO_RUNS:
         print(message)
         args.run_tag = run_tag
         args.T = int(horizon)
+        _print_run_config(args, run_tag)
         reward_curve, cost_curve, diagnostics = ACPO_main(args, EXAMPLE_NAME)
         _save_mat_with_seed(
             build_algorithm_artifact_path(BASE_DIR, ALGORITHM_NAME, "ACPO_reward_{0}.mat".format(run_tag)),
@@ -108,6 +164,7 @@ def _run_single_seed(args):
             args,
             run_tag,
         )
+        _print_run_summary(reward_curve, cost_curve, diagnostics, run_tag)
 
 
 def main(args):

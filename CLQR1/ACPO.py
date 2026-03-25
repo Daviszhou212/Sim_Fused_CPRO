@@ -479,6 +479,45 @@ def _line_search(
     }
 
 
+def _format_metric(value, precision=4):
+    numeric = float(value)
+    abs_numeric = abs(numeric)
+    if (abs_numeric >= 1e4) or ((abs_numeric > 0.0) and (abs_numeric < 1e-3)):
+        return "{0:.2e}".format(numeric)
+    return "{0:.{1}f}".format(numeric, int(precision))
+
+
+def _print_iteration_summary(
+    iteration_index,
+    num_iterations,
+    objective_avg,
+    cost_avg,
+    constraint_violation,
+    reward_rate,
+    cost_rate,
+    search_info,
+    cg_count,
+):
+    print(
+        "ACPO iter {0:03d}/{1:03d} | obj={2} | cost={3} | viol={4} | "
+        "r_bar={5} | c_bar={6} | mode={7} | accepted={8} | kl={9} | bt={10} | cg={11} | scale={12}".format(
+            int(iteration_index) + 1,
+            int(num_iterations),
+            _format_metric(objective_avg),
+            _format_metric(cost_avg),
+            _format_metric(constraint_violation),
+            _format_metric(reward_rate),
+            _format_metric(cost_rate),
+            str(search_info["mode"]),
+            int(bool(search_info["accepted"])),
+            _format_metric(search_info["mean_kl"], precision=6),
+            int(search_info["backtracks"]),
+            int(cg_count),
+            _format_metric(search_info["scale"], precision=6),
+        )
+    )
+
+
 def ACPO_main(args, example_name):
     if str(example_name) != "CLQR":
         raise ValueError("ACPO_main currently supports CLQR only. got example_name={0}".format(example_name))
@@ -524,9 +563,14 @@ def ACPO_main(args, example_name):
         "cost_surrogate": [],
         "constraint_violation": [],
         "cg_iters": [],
+        "objective_avg": [],
+        "cost_avg": [],
+        "reward_rate": [],
+        "cost_rate": [],
+        "line_search_scale": [],
     }
 
-    for _ in range(num_iterations):
+    for iteration_index in range(num_iterations):
         batch = _rollout_batch(env, actor, normalizer, horizon, constraint_limit, device, observation)
         observation = batch["last_observation"]
         stats = _prepare_advantages(
@@ -541,8 +585,10 @@ def ACPO_main(args, example_name):
         reward_critic.fit(batch["state_norm"], stats["reward_returns"], vf_epochs, vf_batch_size)
         cost_critic.fit(batch["state_norm"], stats["cost_returns"], vf_epochs, vf_batch_size)
 
-        objective_curve.append(float(np.mean(batch["objective_cost"])))
-        cost_curve.append(float(np.mean(batch["cost"])))
+        objective_avg = float(np.mean(batch["objective_cost"]))
+        cost_avg = float(np.mean(batch["cost"]))
+        objective_curve.append(objective_avg)
+        cost_curve.append(cost_avg)
 
         old_actor = _clone_actor(actor)
         old_params = _get_flat_params(actor).detach().clone()
@@ -563,7 +609,7 @@ def ACPO_main(args, example_name):
 
         accepted = False
         search_info = None
-        if step_terms is not None and constraint_violation <= 0.0:
+        if step_terms is not None:
             feasible_step, _ = _primal_feasible_step(step_terms, constraint_violation, delta, hvp_fn)
             if feasible_step is not None:
                 search_info = _line_search(
@@ -619,6 +665,23 @@ def ACPO_main(args, example_name):
         diagnostics["cost_surrogate"].append(float(search_info["cost_surrogate"]))
         diagnostics["constraint_violation"].append(float(constraint_violation))
         diagnostics["cg_iters"].append(int(cg_count))
+        diagnostics["objective_avg"].append(float(objective_avg))
+        diagnostics["cost_avg"].append(float(cost_avg))
+        diagnostics["reward_rate"].append(float(stats["reward_rate"]))
+        diagnostics["cost_rate"].append(float(stats["cost_rate"]))
+        diagnostics["line_search_scale"].append(float(search_info["scale"]))
+
+        _print_iteration_summary(
+            iteration_index,
+            num_iterations,
+            objective_avg,
+            cost_avg,
+            constraint_violation,
+            stats["reward_rate"],
+            stats["cost_rate"],
+            search_info,
+            cg_count,
+        )
 
     diagnostics_out = {
         "accepted": np.asarray(diagnostics["accepted"], dtype=np.int32),
@@ -629,6 +692,11 @@ def ACPO_main(args, example_name):
         "cost_surrogate": np.asarray(diagnostics["cost_surrogate"], dtype=np.float64),
         "constraint_violation": np.asarray(diagnostics["constraint_violation"], dtype=np.float64),
         "cg_iters": np.asarray(diagnostics["cg_iters"], dtype=np.int32),
+        "objective_avg": np.asarray(diagnostics["objective_avg"], dtype=np.float64),
+        "cost_avg": np.asarray(diagnostics["cost_avg"], dtype=np.float64),
+        "reward_rate": np.asarray(diagnostics["reward_rate"], dtype=np.float64),
+        "cost_rate": np.asarray(diagnostics["cost_rate"], dtype=np.float64),
+        "line_search_scale": np.asarray(diagnostics["line_search_scale"], dtype=np.float64),
     }
 
     return objective_curve, cost_curve, diagnostics_out

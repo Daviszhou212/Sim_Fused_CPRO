@@ -41,12 +41,13 @@ PLOT_SERIES = [
         "artifact_group": "HRL",
         "reward_stem": "HRL_reward_default.mat",
         "cost_stem": "HRL_cost_default.mat",
+        "rho_stem": "HRL_rho_default.mat",
         "color": "#E69F00",
         "marker": "P",
         "prefer_seed_suffix": True,
     },
     {
-        "label": "SLDAC-q5",
+        "label": "SLDAC",
         "artifact_group": "SLDAC",
         "reward_stem": "SLDAC_reward_b100_q5.mat",
         "cost_stem": "SLDAC_cost_b100_q5.mat",
@@ -57,8 +58,8 @@ PLOT_SERIES = [
     {
         "label": "ACPO",
         "artifact_group": "ACPO",
-        "reward_stem": "ACPO_reward_b250.mat",
-        "cost_stem": "ACPO_cost_b250.mat",
+        "reward_stem": "ACPO_reward_b500.mat",
+        "cost_stem": "ACPO_cost_b500.mat",
         "color": "#4D4D4D",
         "marker": "*",
         "prefer_seed_suffix": True,
@@ -73,7 +74,7 @@ PLOT_SERIES = [
         "prefer_seed_suffix": False,
     },
     # {
-    #     "label": "PPO-100",
+    #     "label": "PPO",
     #     "artifact_group": "ppo",
     #     "reward_stem": "reward_ppo_100.mat",
     #     "cost_stem": "cost_ppo_100.mat",
@@ -82,7 +83,7 @@ PLOT_SERIES = [
     #     "prefer_seed_suffix": False,
     # },
     {
-        "label": "CPO-100",
+        "label": "CPO",
         "artifact_group": "cpo",
         "reward_stem": "reward_cpo_100.mat",
         "cost_stem": "cost_cpo_100.mat",
@@ -93,13 +94,18 @@ PLOT_SERIES = [
 ]
 
 # 科研绘图样式：与 MIMO1 保持一致的 IEEE 风格。
-FIG_WIDTH = 3.55
-FIG_HEIGHT = 2.65
+FIG_WIDTH = 4.6
+FIG_HEIGHT = 3.35
 FIG_DPI = 600
 LINE_WIDTH = 1.45
 REFERENCE_LINE_WIDTH = 1.15
 MARKER_SIZE = 5.0
 MARK_EVERY = 6
+COMPARE_LEGEND_NCOL = 4
+REUSE_LEGEND_NCOL = 3
+COMPARE_HEADER_RECT = (0.0, 0.0, 1.0, 0.78)
+REUSE_HEADER_RECT = (0.0, 0.0, 1.0, 0.88)
+REUSE_PANEL_HEIGHT = 2.6
 
 REUSE_COLORS = {
     "New policy": "#000000",
@@ -191,6 +197,13 @@ def _build_seed_preferred_stem(stem):
     return "{0}_seed{1}{2}".format(stem_path.stem, PREFERRED_SEED, stem_path.suffix)
 
 
+def _build_legacy_acpo_stem(stem):
+    stem_text = str(stem)
+    if "_b500" not in stem_text:
+        return None
+    return stem_text.replace("_b500", "_b250", 1)
+
+
 def _validate_plot_series_config(plot_series):
     if not plot_series:
         raise ValueError("PLOT_SERIES must contain at least one plotting series.")
@@ -236,16 +249,10 @@ def _validate_plot_series_config(plot_series):
         if rho_stem is not None:
             if Path(str(rho_stem)).suffix.lower() != ".mat":
                 raise ValueError("PLOT_SERIES[{0}] field rho_stem must point to a .mat file.".format(idx))
-            if str(series_config["artifact_group"]).strip() != "Fused_CPRO":
-                raise ValueError("Only Fused_CPRO series may define rho_stem. Invalid label: {0}".format(label))
+            if str(series_config["artifact_group"]).strip() not in ("Fused_CPRO", "HRL"):
+                raise ValueError("Only Fused_CPRO or HRL series may define rho_stem. Invalid label: {0}".format(label))
             reuse_series.append(series_config)
-
-    if len(reuse_series) > 1:
-        labels_text = ", ".join(_series_label(series_config) for series_config in reuse_series)
-        raise ValueError(
-            "PLOT_SERIES may contain at most one reuse source with rho_stem. got: {0}".format(labels_text)
-        )
-    return reuse_series[0] if reuse_series else None
+    return reuse_series
 
 
 def _resolve_series_mat_path(series_config, stem_key):
@@ -255,6 +262,12 @@ def _resolve_series_mat_path(series_config, stem_key):
     if bool(series_config["prefer_seed_suffix"]):
         candidates.append(_build_seed_preferred_stem(stem))
     candidates.append(stem)
+    if artifact_group == "ACPO":
+        legacy_stem = _build_legacy_acpo_stem(stem)
+        if legacy_stem is not None:
+            if bool(series_config["prefer_seed_suffix"]):
+                candidates.append(_build_seed_preferred_stem(legacy_stem))
+            candidates.append(legacy_stem)
 
     last_error = None
     for candidate in candidates:
@@ -289,6 +302,21 @@ def _style_axis(ax):
     ax.grid(True, axis="x", alpha=0.12)
     for spine in ax.spines.values():
         spine.set_linewidth(0.9)
+
+
+def _apply_compare_header(fig, handles, labels, title_text, legend_ncol, layout_rect):
+    fig.suptitle(title_text, y=0.985)
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.93),
+        ncol=int(legend_ncol),
+        frameon=False,
+        columnspacing=1.1,
+        handlelength=2.0,
+    )
+    fig.tight_layout(pad=0.45, rect=layout_rect)
 
 
 def _save_figure(fig, stem):
@@ -337,10 +365,9 @@ def _plot_objective(curves):
     ax.set_xlabel("Episode")
     ax.set_ylabel(OBJECTIVE_LABEL)
     ax.set_xlim(1, max_episode)
-    ax.set_title("CLQR")
-    ax.legend(loc="upper right", ncol=2)
     _style_axis(ax)
-    fig.tight_layout(pad=0.4)
+    handles, labels = ax.get_legend_handles_labels()
+    _apply_compare_header(fig, handles, labels, "CLQR", COMPARE_LEGEND_NCOL, COMPARE_HEADER_RECT)
     return _save_figure(fig, f"{OUTPUT_PREFIX}_objective_ieee")
 
 
@@ -357,53 +384,75 @@ def _plot_cost(curves):
     ax.set_xlabel("Episode")
     ax.set_ylabel(COST_LABEL)
     ax.set_xlim(1, max_episode)
-    ax.set_title("CLQR")
-    ax.legend(loc="upper right", ncol=2)
     _style_axis(ax)
-    fig.tight_layout(pad=0.4)
+    handles, labels = ax.get_legend_handles_labels()
+    _apply_compare_header(fig, handles, labels, "CLQR", COMPARE_LEGEND_NCOL, COMPARE_HEADER_RECT)
     return _save_figure(fig, f"{OUTPUT_PREFIX}_cost_ieee")
 
 
-def _plot_reuse(series_label, episodes, new_policy, dk_policy, old_policy):
-    common_length, (episodes, new_policy, dk_policy, old_policy) = _truncate_plot_series(
-        episodes,
-        new_policy,
-        dk_policy,
-        old_policy,
-    )
-    fig, ax = plt.subplots(figsize=(FIG_WIDTH, FIG_HEIGHT))
-    ax.plot(
-        episodes,
-        new_policy,
-        color=REUSE_COLORS["New policy"],
-        marker="o",
-        markevery=MARK_EVERY,
-        label="New policy",
-    )
-    ax.plot(
-        episodes,
-        dk_policy,
-        color=REUSE_COLORS["DK policy"],
-        marker="^",
-        markevery=MARK_EVERY,
-        label="DK policy",
-    )
-    ax.plot(
-        episodes,
-        old_policy,
-        color=REUSE_COLORS["Old policy"],
-        marker="s",
-        markevery=MARK_EVERY,
-        label="Old policy",
-    )
-    ax.set_xlabel("Episode")
-    ax.set_ylabel(REUSE_LABEL)
-    ax.set_xlim(1, common_length)
-    ax.set_ylim(0.0, 1.0)
-    ax.set_title("{0} policy mixing weights".format(series_label))
-    ax.legend(loc="center right")
-    _style_axis(ax)
-    fig.tight_layout(pad=0.4)
+def _plot_reuse(reuse_plots):
+    if not reuse_plots:
+        raise ValueError("reuse_plots must contain at least one series.")
+
+    fig_height = REUSE_PANEL_HEIGHT * max(len(reuse_plots), 1)
+    fig, axes = plt.subplots(len(reuse_plots), 1, figsize=(FIG_WIDTH, fig_height), squeeze=False)
+    axes = axes.reshape(-1)
+    legend_handles = None
+    legend_labels = None
+
+    for idx, (series_label, episodes, new_policy, dk_policy, old_policy) in enumerate(reuse_plots):
+        common_length, (episodes, new_policy, dk_policy, old_policy) = _truncate_plot_series(
+            episodes,
+            new_policy,
+            dk_policy,
+            old_policy,
+        )
+        ax = axes[idx]
+        ax.plot(
+            episodes,
+            new_policy,
+            color=REUSE_COLORS["New policy"],
+            marker="o",
+            markevery=MARK_EVERY,
+            label="New policy",
+        )
+        ax.plot(
+            episodes,
+            dk_policy,
+            color=REUSE_COLORS["DK policy"],
+            marker="^",
+            markevery=MARK_EVERY,
+            label="DK policy",
+        )
+        ax.plot(
+            episodes,
+            old_policy,
+            color=REUSE_COLORS["Old policy"],
+            marker="s",
+            markevery=MARK_EVERY,
+            label="Old policy",
+        )
+        ax.set_xlabel("Episode")
+        ax.set_ylabel(REUSE_LABEL)
+        ax.set_xlim(1, common_length)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_title("{0} policy mixing weights".format(series_label))
+        _style_axis(ax)
+        if legend_handles is None:
+            legend_handles, legend_labels = ax.get_legend_handles_labels()
+
+    if legend_handles is not None and legend_labels is not None:
+        fig.legend(
+            legend_handles,
+            legend_labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.985),
+            ncol=REUSE_LEGEND_NCOL,
+            frameon=False,
+            columnspacing=1.2,
+            handlelength=2.0,
+        )
+    fig.tight_layout(pad=0.45, rect=REUSE_HEADER_RECT)
     return _save_figure(fig, f"{OUTPUT_PREFIX}_reuse_ieee")
 
 
@@ -433,13 +482,17 @@ def main():
     outputs.extend(_plot_objective(objective_curves))
     outputs.extend(_plot_cost(cost_curves))
 
-    if reuse_series is not None:
+    reuse_plots = []
+    for reuse_config in reuse_series:
         reuse_data = _try_load_reuse_history(
-            lambda: _resolve_series_mat_path(reuse_series, "rho_stem")
+            lambda reuse_config=reuse_config: _resolve_series_mat_path(reuse_config, "rho_stem")
         )
-        if reuse_data is not None:
-            episodes = np.arange(1, len(reuse_data[0]) + 1, dtype=np.int32)
-            outputs.extend(_plot_reuse(_series_label(reuse_series), episodes, *reuse_data))
+        if reuse_data is None:
+            continue
+        episodes = np.arange(1, len(reuse_data[0]) + 1, dtype=np.int32)
+        reuse_plots.append((_series_label(reuse_config), episodes, *reuse_data))
+    if reuse_plots:
+        outputs.extend(_plot_reuse(reuse_plots))
 
     for path in outputs:
         print(path)
