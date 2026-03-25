@@ -39,6 +39,8 @@ MIMO_CONSTRAINT_LIMIT = 1.2
 EPS = 1e-8
 CHECKPOINT_FILE_TEMPLATE = "episode_{0:04d}.pt"
 CHECKPOINT_FINAL_FILE_TEMPLATE = "episode_{0:04d}_final.pt"
+RHO_SCHEDULER_POWER = "power"
+RHO_SCHEDULER_COSINE_RESTART_DECAY = "cosine_restart_decay"
 
 
 def _format_seed_dir(seed):
@@ -310,9 +312,123 @@ def _build_simplex_constraints(constr, paras_cvx, simplex_dim, rho_min):
     return constr
 
 
-def _get_xi(update_index, beta_rho_pow, xi0):
-    xi = float(xi0) / ((int(update_index) + 1) ** float(beta_rho_pow))
+def _get_xi(update_index, decay_pow, xi0):
+    xi = float(xi0) / ((int(update_index) + 1) ** float(decay_pow))
     return min(max(xi, 0.0), 1.0)
+
+
+def _get_rho_scheduler_mode(args):
+    mode = str(getattr(args, "rho_scheduler", RHO_SCHEDULER_POWER)).strip().lower()
+    if not mode:
+        return RHO_SCHEDULER_POWER
+    if mode not in (RHO_SCHEDULER_POWER, RHO_SCHEDULER_COSINE_RESTART_DECAY):
+        raise ValueError("unsupported rho_scheduler: {0}".format(mode))
+    return mode
+
+
+def _build_rho_scheduler_config(args, beta_actor_pow):
+    mode = _get_rho_scheduler_mode(args)
+    if mode == RHO_SCHEDULER_POWER:
+        beta_rho_pow = float(getattr(args, "beta_rho_pow", beta_actor_pow))
+        if beta_rho_pow <= beta_actor_pow:
+            raise ValueError(
+                "beta_rho_pow must be greater than beta_actor_pow. got beta_actor_pow={0}, beta_rho_pow={1}".format(
+                    beta_actor_pow,
+                    beta_rho_pow,
+                )
+            )
+        return {
+            "mode": mode,
+            "beta_rho_pow": beta_rho_pow,
+            "xi_decay_pow": beta_rho_pow,
+        }
+
+    beta_peak_init = float(getattr(args, "rho_beta_peak_init"))
+    beta_peak_final_ratio = float(getattr(args, "rho_beta_peak_final_ratio"))
+    beta_min = float(getattr(args, "rho_beta_min"))
+    restart_rounds = int(getattr(args, "rho_restart_rounds"))
+    period_mult = int(getattr(args, "rho_period_mult"))
+    total_updates = int(getattr(args, "num_update_time"))
+    xi_decay_pow = float(getattr(args, "xi_decay_pow", beta_actor_pow))
+
+    if beta_min <= 0.0:
+        raise ValueError("rho_beta_min must be positive. got rho_beta_min={0}".format(beta_min))
+    if beta_peak_init < beta_min:
+        raise ValueError(
+            "rho_beta_peak_init must be greater than or equal to rho_beta_min. got rho_beta_peak_init={0}, rho_beta_min={1}".format(
+                beta_peak_init,
+                beta_min,
+            )
+        )
+    if beta_peak_init > 1.0:
+        raise ValueError("rho_beta_peak_init must be less than or equal to 1.0. got {0}".format(beta_peak_init))
+    if (beta_peak_final_ratio <= 0.0) or (beta_peak_final_ratio > 1.0):
+        raise ValueError(
+            "rho_beta_peak_final_ratio must be in (0, 1]. got {0}".format(beta_peak_final_ratio)
+        )
+    if restart_rounds <= 0:
+        raise ValueError("rho_restart_rounds must be a positive integer. got {0}".format(restart_rounds))
+    if period_mult < 1:
+        raise ValueError("rho_period_mult must be an integer greater than or equal to 1. got {0}".format(period_mult))
+    if total_updates <= 0:
+        raise ValueError("num_update_time must be a positive integer. got {0}".format(total_updates))
+
+    cycle_count = min(restart_rounds, total_updates)
+    periods = np.ones((cycle_count,), dtype=np.int32)
+    remaining_updates = total_updates - cycle_count
+    if remaining_updates > 0:
+        weights = np.power(float(period_mult), np.arange(cycle_count, dtype=np.float64))
+        weight_sum = float(np.sum(weights))
+        extra_periods = np.floor((remaining_updates * weights) / weight_sum).astype(np.int32)
+        periods += extra_periods
+        remainder = int(total_updates - int(np.sum(periods)))
+        for idx in range(remainder):
+            periods[-1 - (idx % cycle_count)] += 1
+
+    return {
+        "mode": mode,
+        "beta_peak_init": beta_peak_init,
+        "beta_peak_final_ratio": beta_peak_final_ratio,
+        "beta_min": beta_min,
+        "periods": periods,
+        "period_mult": period_mult,
+        "xi_decay_pow": xi_decay_pow,
+    }
+
+
+def _get_rho_beta(update_index, scheduler_config):
+    if scheduler_config["mode"] == RHO_SCHEDULER_POWER:
+        return 1.0 / ((int(update_index) + 1) ** float(scheduler_config["beta_rho_pow"]))
+
+    periods = np.asarray(scheduler_config["periods"], dtype=np.int32).reshape(-1)
+    restart_index = 0
+    local_index = int(update_index)
+    period = int(periods[-1])
+    for idx, current_period in enumerate(periods):
+        period = int(current_period)
+        if local_index < period:
+            restart_index = idx
+            break
+        restart_index += 1
+        local_index -= period
+    if restart_index >= periods.size:
+        restart_index = periods.size - 1
+        period = int(periods[-1])
+        local_index = max(0, period - 1)
+
+    beta_min = float(scheduler_config["beta_min"])
+    if periods.size <= 1:
+        peak_ratio = 1.0
+    else:
+        peak_ratio = float(scheduler_config["beta_peak_final_ratio"]) ** (float(restart_index) / float(periods.size - 1))
+    beta_peak = float(scheduler_config["beta_peak_init"]) * peak_ratio
+    beta_peak = max(beta_peak, beta_min)
+    if period <= 1:
+        return beta_peak
+
+    phase = float(local_index) / float(period - 1)
+    cosine_weight = 0.5 * (1.0 + np.cos(np.pi * phase))
+    return beta_min + (beta_peak - beta_min) * cosine_weight
 
 
 def _solve_problem(prob):
@@ -421,6 +537,34 @@ def _q_head_normalize(q_hat):
     for idx in range(1, out.shape[1]):
         out[:, idx] = (out[:, idx] - np.mean(out[:, idx])) / reward_std
     return out
+
+
+def _prcrl_q_head_normalize(q_hat):
+    q_hat = np.asarray(q_hat, dtype=np.float64)
+    if q_hat.ndim != 2 or q_hat.shape[0] <= 0:
+        return q_hat
+    out = q_hat.copy()
+    reward_std = np.std(out[:, 0]) + 1e-6
+    out[:, 0] = (out[:, 0] - np.mean(out[:, 0])) / reward_std
+    for idx in range(1, out.shape[1]):
+        out[:, idx] = out[:, idx] - np.mean(out[:, idx])
+    return out
+
+
+def _prcrl_window_q_hat(costs_batch, func_value, t_horizon):
+    costs_arr = np.asarray(costs_batch, dtype=np.float64)
+    if costs_arr.shape[0] < (2 * int(t_horizon)):
+        raise ValueError(
+            "PRCRL requires at least 2T samples in the buffer. got {0}, need {1}".format(
+                int(costs_arr.shape[0]),
+                int(2 * t_horizon),
+            )
+        )
+    q_hat = np.zeros((int(t_horizon), costs_arr.shape[1]), dtype=np.float64)
+    for idx in range(int(t_horizon)):
+        costs_tmp = costs_arr[idx + 1 : idx + 1 + int(t_horizon)]
+        q_hat[idx] = np.sum(costs_tmp, axis=0) - float(t_horizon) * np.asarray(func_value, dtype=np.float64)
+    return q_hat
 
 
 def _normalize_run_tags(run_tags):
@@ -688,6 +832,32 @@ def _build_old_policy_library(args, example_name, main_env, device, state_dim, a
     return old_policies
 
 
+def _build_old_policy_labels(args):
+    run_tags = _normalize_run_tags(getattr(args, "old_policy_run_tags", None))
+    return ["new_actor", "dk_policy"] + run_tags
+
+
+def _format_rho_debug_line(rho_labels, rho, precision=6):
+    try:
+        rho_arr = np.asarray(rho, dtype=np.float64).reshape(-1)
+        labels = [] if rho_labels is None else [str(item) for item in list(rho_labels)]
+        # 日志输出不能因为标签异常中断训练，维度不匹配时退化为索引标签。
+        if len(labels) != rho_arr.size:
+            labels = ["rho_{0}".format(idx) for idx in range(rho_arr.size)]
+        value_format = "{{0}}={{1:.{0}f}}".format(int(precision))
+        parts = []
+        for idx, value in enumerate(rho_arr):
+            numeric = float(value)
+            if np.isfinite(numeric):
+                parts.append(value_format.format(labels[idx], numeric))
+            else:
+                parts.append("{0}={1}".format(labels[idx], numeric))
+        return "rho: " + ", ".join(parts)
+    except Exception:
+        rho_arr = np.asarray(rho).reshape(-1)
+        return "rho: " + np.array2string(rho_arr, precision=int(precision), separator=", ")
+
+
 def _select_policy_gradient_batch(
     online_state_batch,
     online_action_batch,
@@ -764,14 +934,7 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
     max_steps = int(args.MAX_STEPS)
     alpha_pow = float(args.alpha_pow)
     beta_actor_pow = float(getattr(args, "beta_actor_pow", getattr(args, "beta_pow", 0.7)))
-    beta_rho_pow = float(getattr(args, "beta_rho_pow", beta_actor_pow))
-    if beta_rho_pow <= beta_actor_pow:
-        raise ValueError(
-            "beta_rho_pow must be greater than beta_actor_pow. got beta_actor_pow={0}, beta_rho_pow={1}".format(
-                beta_actor_pow,
-                beta_rho_pow,
-            )
-        )
+    rho_scheduler_config = _build_rho_scheduler_config(args, beta_actor_pow)
     xi0 = float(xi0)
     if (xi0 < 0.0) or (xi0 > 1.0):
         raise ValueError("xi0 must be in [0, 1]. got xi0={0}".format(xi0))
@@ -795,7 +958,7 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
         action_dim,
         constraint_dim,
     )
-    rho_labels = ["new_actor", "dk_policy"] + _normalize_run_tags(getattr(args, "old_policy_run_tags", None))
+    rho_labels = _build_old_policy_labels(args)
     offline_datasets = []
     if use_offline_data:
         offline_steps = max(int(OFFLINE_STEPS_MULTIPLIER * t_horizon), grad_t)
@@ -842,9 +1005,9 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
             q_update_index += 1
             alpha = 1.0 / ((update_index + 1) ** alpha_pow)
             beta_actor = 1.0 / ((update_index + 1) ** beta_actor_pow)
-            beta_rho = 1.0 / ((update_index + 1) ** beta_rho_pow)
+            beta_rho = _get_rho_beta(update_index, rho_scheduler_config)
             if use_offline_data:
-                xi = _get_xi(update_index, beta_rho_pow, xi0)
+                xi = _get_xi(update_index, rho_scheduler_config["xi_decay_pow"], xi0)
             else:
                 xi = 0.0
             eta = 1.0 / ((update_index + 1) ** eta_pow)
@@ -865,6 +1028,7 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
                 reward_average_save.append(float(np.mean(aver_reward_buffer)))
                 cost_average_save.append(float(np.mean(aver_cost_buffer)))
                 rho_history_save.append(np.asarray(rho, dtype=np.float64).copy())
+                print(_format_rho_debug_line(rho_labels, rho))
                 if use_offline_data:
                     xi_history_save.append(float(xi))
                     print("xi:", float(xi))
@@ -962,6 +1126,170 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
     )
 
 
+def _run_prcrl_main(args, example_name):
+    seed = int(getattr(args, "seed", 0))
+    _set_seed(seed)
+    device = str(getattr(args, "device", "cpu")).lower()
+    if device == "cuda" and (not torch.cuda.is_available()):
+        device = "cpu"
+
+    t_horizon = int(args.T)
+    grad_t = int(args.grad_T)
+    if grad_t != t_horizon:
+        raise ValueError(
+            "PRCRL requires grad_T == T in the current implementation. got T={0}, grad_T={1}".format(
+                t_horizon,
+                grad_t,
+            )
+        )
+    num_new_data = int(args.num_new_data)
+    if num_new_data <= 0:
+        raise ValueError("num_new_data must be positive for PRCRL.")
+    update_time_per_episode = int(args.update_time_per_episode)
+    max_steps = int(args.MAX_STEPS)
+    alpha_pow = float(args.alpha_pow)
+    beta_actor_pow = float(getattr(args, "beta_actor_pow", getattr(args, "beta_pow", 0.7)))
+    rho_scheduler_config = _build_rho_scheduler_config(args, beta_actor_pow)
+    tau_reward = float(args.tau_reward)
+    tau_cost = float(args.tau_cost)
+    window = int(args.window)
+
+    env, actor_new, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(example_name, seed, device, grad_t)
+    observation = env.reset()
+    old_policies = _build_old_policy_library(
+        args,
+        example_name,
+        env,
+        device,
+        state_dim,
+        action_dim,
+        constraint_dim,
+    )
+    rho_labels = _build_old_policy_labels(args)
+    buffer = _make_buffer(example_name, t_horizon, window, num_new_data, state_dim, action_dim, constraint_dim)
+
+    rho = np.ones((len(old_policies) + 1,), dtype=np.float64)
+    rho = _normalize_simplex(rho, RHO_MIN)
+    theta_actor = _flatten_actor(actor_new)
+    theta_dim = rho.size + theta_actor.size
+    func_value = np.zeros((constraint_dim + 1,), dtype=np.float64)
+    grad = np.zeros((constraint_dim + 1, theta_dim), dtype=np.float64)
+
+    reward_average_save = []
+    cost_average_save = []
+    rho_history_save = []
+    drift_update_index_save = []
+    actor_drift_save = []
+    rho_drift_save = []
+    update_index = 0
+    print_index = 0
+
+    for t in range(max_steps):
+        state = observation
+        choice = int(np.random.choice(rho.size, p=rho))
+        if choice == 0:
+            action = _sample_action(actor_new, state)
+        else:
+            action = old_policies[choice - 1].sample_action(state)
+        observation, reward, done, info = env.step(action)
+        next_state = observation
+        costs = _build_costs(reward, info, constraint_dim, constr_lim)
+        aver_cost = float(info.get("cost", 0.0)) / max(constraint_dim, 1)
+        buffer.store_experiences(state, action, costs, next_state, float(reward), aver_cost)
+
+        if (t + 1) < (2 * t_horizon):
+            continue
+        if ((t + 1 - 2 * t_horizon) % num_new_data) != 0:
+            continue
+
+        alpha = 1.0 / ((update_index + 1) ** alpha_pow)
+        beta_actor = 1.0 / ((update_index + 1) ** beta_actor_pow)
+        beta_rho = _get_rho_beta(update_index, rho_scheduler_config)
+
+        state_buffer, action_buffer, costs_buffer, next_state_buffer, aver_reward_buffer, aver_cost_buffer = buffer.take_experiences()
+        func_value_tilda = np.mean(costs_buffer, axis=0)
+        func_value = (1.0 - alpha) * func_value + alpha * func_value_tilda
+
+        if update_index % update_time_per_episode == 0:
+            print("PRCRL_EPISODE:", print_index)
+            print("reward_average:", float(np.mean(aver_reward_buffer)))
+            print("cost_average:", float(np.mean(aver_cost_buffer)))
+            reward_average_save.append(float(np.mean(aver_reward_buffer)))
+            cost_average_save.append(float(np.mean(aver_cost_buffer)))
+            rho_history_save.append(np.asarray(rho, dtype=np.float64).copy())
+            print(_format_rho_debug_line(rho_labels, rho))
+            print_index += 1
+
+        q_hat = _prcrl_window_q_hat(costs_buffer, func_value, t_horizon)
+        q_hat = _prcrl_q_head_normalize(q_hat)
+        q_hat_torch = torch.tensor(q_hat, dtype=torch.float, device=device)
+        state_batch_torch = torch.tensor(state_buffer[1 : t_horizon + 1], dtype=torch.float, device=device)
+        action_batch_torch = torch.tensor(action_buffer[1 : t_horizon + 1], dtype=torch.float, device=device)
+
+        grad_tilda = np.zeros_like(grad)
+        for head in range(constraint_dim + 1):
+            _zero_actor_extra_grad(actor_new)
+            log_mix, rho_torch, log_std_leaf = _build_mixture_log_prob(
+                state_batch_torch,
+                action_batch_torch,
+                actor_new,
+                old_policies,
+                rho,
+                RHO_MIN,
+            )
+            actor_loss = (q_hat_torch[:, head] * log_mix).mean()
+            actor_loss.backward()
+            rho_grad = rho_torch.grad.detach().cpu().numpy().astype(np.float64, copy=False)
+            actor_grad = _flatten_actor_grad(actor_new, log_std_leaf.grad)
+            grad_tilda[head] = np.concatenate((rho_grad, actor_grad), axis=0)
+
+        grad = (1.0 - alpha) * grad + alpha * grad_tilda
+        actor_now = _flatten_actor(actor_new)
+        theta_now = np.concatenate((rho, actor_now), axis=0)
+        theta_bar = _policy_update(
+            func_value,
+            grad,
+            theta_now,
+            tau_reward=tau_reward,
+            tau_cost=tau_cost,
+            simplex_dim=rho.size,
+            rho_min=RHO_MIN,
+        )
+        rho_bar = theta_bar[:rho.size]
+        actor_bar = theta_bar[rho.size:]
+        rho_next = (1.0 - beta_rho) * rho + beta_rho * rho_bar
+        actor_next = (1.0 - beta_actor) * actor_now + beta_actor * actor_bar
+        rho_applied = _normalize_simplex(rho_next, RHO_MIN)
+
+        update_index += 1
+        drift_update_index_save.append(int(update_index))
+        actor_drift_save.append(_rms_drift(actor_next, actor_now))
+        rho_drift_save.append(_rms_drift(rho_applied, rho))
+        rho = rho_applied
+        _set_actor_from_flat(actor_new, actor_next)
+
+    rho_history = np.asarray(rho_history_save, dtype=np.float64)
+    if rho_history.size <= 0:
+        rho_history = np.zeros((0, len(rho_labels)), dtype=np.float64)
+    elif rho_history.ndim == 1:
+        rho_history = rho_history.reshape(1, -1)
+
+    drift_history = {
+        "update_index": np.asarray(drift_update_index_save, dtype=np.int32),
+        "actor_rms": np.asarray(actor_drift_save, dtype=np.float64),
+        "critic_rms": np.zeros((0,), dtype=np.float64),
+        "rho_rms": np.asarray(rho_drift_save, dtype=np.float64),
+    }
+    return (
+        reward_average_save,
+        cost_average_save,
+        rho_history,
+        np.zeros((0,), dtype=np.float64),
+        rho_labels,
+        drift_history,
+    )
+
+
 def Fused_CPRO_main(args, example_name):
     xi0 = float(getattr(args, "xi0", OFFLINE_BATCH_RATIO))
     xi_decay_updates = int(getattr(args, "xi_decay_updates", 500))
@@ -976,6 +1304,19 @@ def Fused_CPRO_main(args, example_name):
     )
 
 
+def Fused_CPRO_CosRho_main(args, example_name):
+    run_args = copy.copy(args)
+    run_args.rho_scheduler = getattr(run_args, "rho_scheduler", RHO_SCHEDULER_COSINE_RESTART_DECAY)
+    xi0 = float(getattr(run_args, "xi0", OFFLINE_BATCH_RATIO))
+    return _run_policy_mix_main(
+        run_args,
+        example_name,
+        algorithm_label="Fused_CPRO_CosRho",
+        use_offline_data=True,
+        xi0=xi0,
+    )
+
+
 def HRL_main(args, example_name):
     return _run_policy_mix_main(
         args,
@@ -984,3 +1325,7 @@ def HRL_main(args, example_name):
         use_offline_data=False,
         xi0=0.0,
     )
+
+
+def PRCRL_main(args, example_name):
+    return _run_prcrl_main(args, example_name)

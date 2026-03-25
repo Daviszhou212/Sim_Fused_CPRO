@@ -37,6 +37,16 @@ PLOT_SERIES = [
         "prefer_seed_suffix": True,
     },
     {
+        "label": "Fused-CPRO-CosRho",
+        "artifact_group": "Fused_CPRO_CosRho",
+        "reward_stem": "Fused_CPRO_CosRho_reward_default.mat",
+        "cost_stem": "Fused_CPRO_CosRho_cost_default.mat",
+        "rho_stem": "Fused_CPRO_CosRho_rho_default.mat",
+        "color": "#2A9D8F",
+        "marker": "h",
+        "prefer_seed_suffix": True,
+    },
+    {
         "label": "HRL",
         "artifact_group": "HRL",
         "reward_stem": "HRL_reward_default.mat",
@@ -44,6 +54,16 @@ PLOT_SERIES = [
         "rho_stem": "HRL_rho_default.mat",
         "color": "#E69F00",
         "marker": "P",
+        "prefer_seed_suffix": True,
+    },
+    {
+        "label": "PRCRL",
+        "artifact_group": "PRCRL",
+        "reward_stem": "PRCRL_reward_default.mat",
+        "cost_stem": "PRCRL_cost_default.mat",
+        "rho_stem": "PRCRL_rho_default.mat",
+        "color": "#8C564B",
+        "marker": "X",
         "prefer_seed_suffix": True,
     },
     {
@@ -249,8 +269,12 @@ def _validate_plot_series_config(plot_series):
         if rho_stem is not None:
             if Path(str(rho_stem)).suffix.lower() != ".mat":
                 raise ValueError("PLOT_SERIES[{0}] field rho_stem must point to a .mat file.".format(idx))
-            if str(series_config["artifact_group"]).strip() not in ("Fused_CPRO", "HRL"):
-                raise ValueError("Only Fused_CPRO or HRL series may define rho_stem. Invalid label: {0}".format(label))
+            if str(series_config["artifact_group"]).strip() not in ("Fused_CPRO", "Fused_CPRO_CosRho", "HRL", "PRCRL"):
+                raise ValueError(
+                    "Only Fused_CPRO, Fused_CPRO_CosRho, HRL or PRCRL series may define rho_stem. Invalid label: {0}".format(
+                        label
+                    )
+                )
             reuse_series.append(series_config)
     return reuse_series
 

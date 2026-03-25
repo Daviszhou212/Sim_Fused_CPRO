@@ -6,28 +6,28 @@ import numpy as np
 from scipy.io import savemat
 
 from artifact_paths import build_algorithm_artifact_path
-from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
-from Fused_CPRO import Fused_CPRO_main, _resolve_sldac_checkpoint_path
+from Fused_CPRO import Fused_CPRO_CosRho_main, _resolve_sldac_checkpoint_path
 from run_mimo_sldac import _migrate_legacy_checkpoints
+from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
 
 
-# 固定场景：该入口仅运行 MIMO 的 Fused-CPRO。
 EXAMPLE_NAME = "MIMO"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEVICE = "cpu"
-ALGORITHM_NAME = "Fused_CPRO"
+ALGORITHM_NAME = "Fused_CPRO_CosRho"
+ALGORITHM_LABEL = "Fused-CPRO-CosRho"
+RHO_SCHEDULER = "cosine_restart_decay"
 
-# 固定实验组：分别对应四组 batchsize / q 配置。
-FUSED_CPRO_RUNS = [
-    ("b100_q1", "Fused-CPRO, batchsize=100, q=1", 500, 500, 100, 1),
-    #("b100_q5", "Fused-CPRO, batchsize=100, q=5", 500, 500, 100, 5),
-    #("b100_q10", "Fused-CPRO, batchsize=100, q=10", 500, 500, 100, 10),
-    #("b500_q10", "Fused-CPRO, T=500, batchsize=500, q=10", 50, 100, 100, 10),
+# 固定实验组：默认与 MIMO Fused-CPRO 保持同一组 horizon / q 配置。
+FUSED_CPRO_COSRHO_RUNS = [
+    ("b100_q1", "{0}, batchsize=100, q=1".format(ALGORITHM_LABEL), 500, 500, 100, 1),
+    # ("b100_q5", "{0}, batchsize=100, q=5".format(ALGORITHM_LABEL), 500, 500, 100, 5),
+    # ("b100_q10", "{0}, batchsize=100, q=10".format(ALGORITHM_LABEL), 500, 500, 100, 10),
+    # ("b500_q10", "{0}, T=500, batchsize=500, q=10".format(ALGORITHM_LABEL), 50, 100, 100, 10),
 ]
 
-# 本地默认超参数。
+# 顶部可调超参数：基础参数与 MIMO Fused-CPRO 对齐。
 DEFAULT_SEED = 0
-DEFAULT_SEEDS = (DEFAULT_SEED,)
 DEFAULT_OLD_POLICY_SEED = 1
 DEFAULT_WINDOW = 10000
 DEFAULT_EPISODE = 60
@@ -36,20 +36,27 @@ DEFAULT_NUM_UPDATE_TIME = DEFAULT_EPISODE * DEFAULT_UPDATE_TIME_PER_EPISODE
 DEFAULT_ALPHA_POW = 0.5
 DEFAULT_BETA_ACTOR_POW = 0.6
 DEFAULT_BETA_RHO_POW = 0.9
-DEFAULT_XI0 = 1.0
+DEFAULT_XI0 = 0.5
 DEFAULT_ETA_POW = 0.01
 DEFAULT_GAMMA_POW_REWARD = 0.2
 DEFAULT_GAMMA_POW_COST = 0.2
 DEFAULT_TAU_REWARD = 1.0
 DEFAULT_TAU_COST = 1.0
 
-# old policy 选择：显式指定 SLDAC checkpoint，不参与任何参数同步。
-OLD_POLICY_BQ_LIST = [(100, 10)]
-OLD_POLICY_PRETRAIN_EPISODE = 10
+# CosRho 额外调度参数：控制 rho 的 cosine-restart-decay 更新。
+DEFAULT_XI_DECAY_POW = DEFAULT_BETA_RHO_POW
+DEFAULT_RHO_BETA_PEAK_INIT = 1.0
+DEFAULT_RHO_BETA_PEAK_FINAL_RATIO = 0.35
+DEFAULT_RHO_BETA_MIN = 0.05
+DEFAULT_RHO_RESTART_ROUNDS = 4
+DEFAULT_RHO_PERIOD_MULT = 2
+
+# old policy 配置：显式选择要复用的 SLDAC checkpoint 组。
+OLD_POLICY_BQ_LIST = [(100, 1)]
+OLD_POLICY_PRETRAIN_EPISODE = 40
 OLD_POLICY_CHECKPOINT_ROOT = os.path.join(BASE_DIR, "checkpoints", "SLDAC")
 
 
-# 该入口以 .py 顶部配置为唯一配置源，CLI 仅保留帮助与兼容提示。
 def build_python_config():
     return {
         "seed": int(DEFAULT_SEED),
@@ -62,12 +69,19 @@ def build_python_config():
         "beta_actor_pow": float(DEFAULT_BETA_ACTOR_POW),
         "beta_rho_pow": float(DEFAULT_BETA_RHO_POW),
         "xi0": float(DEFAULT_XI0),
+        "xi_decay_pow": float(DEFAULT_XI_DECAY_POW),
         "eta_pow": float(DEFAULT_ETA_POW),
         "gamma_pow_reward": float(DEFAULT_GAMMA_POW_REWARD),
         "gamma_pow_cost": float(DEFAULT_GAMMA_POW_COST),
         "tau_reward": float(DEFAULT_TAU_REWARD),
         "tau_cost": float(DEFAULT_TAU_COST),
         "device": str(DEVICE),
+        "rho_scheduler": str(RHO_SCHEDULER),
+        "rho_beta_peak_init": float(DEFAULT_RHO_BETA_PEAK_INIT),
+        "rho_beta_peak_final_ratio": float(DEFAULT_RHO_BETA_PEAK_FINAL_RATIO),
+        "rho_beta_min": float(DEFAULT_RHO_BETA_MIN),
+        "rho_restart_rounds": int(DEFAULT_RHO_RESTART_ROUNDS),
+        "rho_period_mult": int(DEFAULT_RHO_PERIOD_MULT),
         "old_policies": None,
         "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
         "old_policy_pretrain_episode": int(OLD_POLICY_PRETRAIN_EPISODE),
@@ -131,9 +145,7 @@ def _normalize_old_policy_bq_list(bq_list):
     run_tags = []
     for item in bq_list:
         if not isinstance(item, (list, tuple)) or len(item) != 2:
-            raise ValueError(
-                "OLD_POLICY_BQ_LIST item must be a (b, q) pair. got {0!r}".format(item)
-            )
+            raise ValueError("OLD_POLICY_BQ_LIST item must be a (b, q) pair. got {0!r}".format(item))
         batch_size = _parse_positive_int(item[0], "b", item)
         q_update_time = _parse_positive_int(item[1], "q", item)
         run_tags.append(_format_old_policy_run_tag(batch_size, q_update_time))
@@ -187,6 +199,9 @@ def _resolve_old_policy_args(args):
     checkpoint_root = getattr(args, "old_policy_checkpoint_root", None) or OLD_POLICY_CHECKPOINT_ROOT
 
     args.old_policy_run_tags = ",".join(run_tags)
+    args.old_policy_pretrain_episode = pretrain_episode
+    args.old_policy_checkpoint_root = checkpoint_root
+    # Fused_CPRO.py 内部沿用历史字段名，这里同步写入兼容别名。
     args.pretrain_episode = pretrain_episode
     args.checkpoint_root = checkpoint_root
 
@@ -210,77 +225,17 @@ def _validate_old_policy_checkpoints(args):
             args,
             EXAMPLE_NAME,
             run_tag,
-            int(args.pretrain_episode),
+            int(args.old_policy_pretrain_episode),
             int(args.old_policy_seed),
         )
         resolved_paths.append((run_tag, checkpoint_path))
 
     print("selected old policy run_tags:", ", ".join(run_tags))
     print("selected old policy seed:", int(args.old_policy_seed))
-    print("selected old policy pretrain_episode:", int(args.pretrain_episode))
+    print("selected old policy pretrain_episode:", int(args.old_policy_pretrain_episode))
     for run_tag, checkpoint_path in resolved_paths:
         print("verified old policy checkpoint:", run_tag, "->", checkpoint_path)
     return args
-
-
-def _finalize_actor_rho_powers(args):
-    if getattr(args, "beta_actor_pow", None) is None:
-        args.beta_actor_pow = float(DEFAULT_BETA_ACTOR_POW)
-    else:
-        args.beta_actor_pow = float(args.beta_actor_pow)
-
-    if getattr(args, "beta_rho_pow", None) is None:
-        args.beta_rho_pow = float(DEFAULT_BETA_RHO_POW)
-    else:
-        args.beta_rho_pow = float(args.beta_rho_pow)
-
-    if float(args.beta_rho_pow) <= float(args.beta_actor_pow):
-        raise ValueError(
-            "beta_rho_pow must be greater than beta_actor_pow. got beta_actor_pow={0}, beta_rho_pow={1}".format(
-                args.beta_actor_pow,
-                args.beta_rho_pow,
-            )
-        )
-    return args
-
-
-def _apply_run_config(args, output_suffix, message, t_horizon, grad_t, num_new_data_run, q_update_time):
-    print(message)
-    args.run_tag = output_suffix
-    args.T = t_horizon
-    args.grad_T = grad_t
-    args.num_new_data = num_new_data_run
-    args.Q_update_time = q_update_time
-    args = _refresh_max_steps(args)
-    return args
-
-
-def _plot_reuse_probability(base_dir, output_suffix, rho_history, rho_labels, xi_history, seed):
-    if rho_history.size == 0:
-        return
-    out_path = build_algorithm_artifact_path(
-        base_dir,
-        ALGORITHM_NAME,
-        "Fused_CPRO_reuse_prob_{0}_seed{1}.png".format(output_suffix, int(seed)),
-    )
-    x = np.arange(1, rho_history.shape[0] + 1)
-    fig, axes = plt.subplots(2, 1, figsize=(9, 7), sharex=True)
-
-    for idx, label in enumerate(rho_labels):
-        axes[0].plot(x, rho_history[:, idx], linewidth=2.0, label=label)
-    axes[0].set_ylabel("Reuse probability")
-    axes[0].set_title("Fused-CPRO reuse probabilities: {0}".format(output_suffix))
-    axes[0].grid(alpha=0.25)
-    axes[0].legend(frameon=False, ncol=2)
-
-    axes[1].plot(x, xi_history, color="#222222", linewidth=2.0)
-    axes[1].set_xlabel("Episode")
-    axes[1].set_ylabel("xi")
-    axes[1].grid(alpha=0.25)
-
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
 
 
 def _moving_average(values, window=5):
@@ -294,7 +249,43 @@ def _moving_average(values, window=5):
     return out
 
 
-def _plot_drift_speed(base_dir, output_suffix, drift_history, seed):
+def _build_artifact_name(kind, run_tag, suffix="mat"):
+    return "{0}_{1}_{2}.{3}".format(ALGORITHM_NAME, str(kind), str(run_tag), str(suffix))
+
+
+def _build_plot_name(kind, run_tag, seed):
+    return "{0}_{1}_{2}_seed{3}.png".format(ALGORITHM_NAME, str(kind), str(run_tag), int(seed))
+
+
+def _plot_reuse_probability(output_suffix, rho_history, rho_labels, xi_history, seed):
+    if rho_history.size == 0:
+        return
+    out_path = build_algorithm_artifact_path(
+        BASE_DIR,
+        ALGORITHM_NAME,
+        _build_plot_name("reuse_prob", output_suffix, seed),
+    )
+    x = np.arange(1, rho_history.shape[0] + 1)
+    fig, axes = plt.subplots(2, 1, figsize=(9, 7), sharex=True)
+
+    for idx, label in enumerate(rho_labels):
+        axes[0].plot(x, rho_history[:, idx], linewidth=2.0, label=label)
+    axes[0].set_ylabel("Reuse probability")
+    axes[0].set_title("{0} reuse probabilities: {1}".format(ALGORITHM_LABEL, output_suffix))
+    axes[0].grid(alpha=0.25)
+    axes[0].legend(frameon=False, ncol=2)
+
+    axes[1].plot(x, xi_history, color="#222222", linewidth=2.0)
+    axes[1].set_xlabel("Episode")
+    axes[1].set_ylabel("xi")
+    axes[1].grid(alpha=0.25)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_drift_speed(output_suffix, drift_history, seed):
     update_index = np.asarray(drift_history.get("update_index", []), dtype=np.float64).reshape(-1)
     if update_index.size <= 0:
         return
@@ -303,9 +294,9 @@ def _plot_drift_speed(base_dir, output_suffix, drift_history, seed):
     rho_rms = np.asarray(drift_history.get("rho_rms", []), dtype=np.float64).reshape(-1)
 
     out_path = build_algorithm_artifact_path(
-        base_dir,
+        BASE_DIR,
         ALGORITHM_NAME,
-        "Fused_CPRO_drift_speed_{0}_seed{1}.png".format(output_suffix, int(seed)),
+        _build_plot_name("drift_speed", output_suffix, seed),
     )
     fig, axes = plt.subplots(2, 1, figsize=(9, 7), sharex=True)
 
@@ -313,7 +304,7 @@ def _plot_drift_speed(base_dir, output_suffix, drift_history, seed):
         axes[0].plot(update_index, values, linewidth=2.0, label=label)
     axes[0].set_yscale("log")
     axes[0].set_ylabel("RMS drift")
-    axes[0].set_title("Fused-CPRO drift speeds: {0}".format(output_suffix))
+    axes[0].set_title("{0} drift speeds: {1}".format(ALGORITHM_LABEL, output_suffix))
     axes[0].grid(alpha=0.25)
     axes[0].legend(frameon=False, ncol=3)
 
@@ -341,12 +332,18 @@ def build_parser():
     parser.add_argument("--beta_actor_pow", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--beta_rho_pow", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--xi0", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--xi_decay_pow", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--eta_pow", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--gamma_pow_reward", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--gamma_pow_cost", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--tau_reward", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--tau_cost", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--rho-beta-peak-init", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--rho-beta-peak-final-ratio", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--rho-beta-min", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--rho-restart-rounds", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--rho-period-mult", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policies", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-seed", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)
@@ -354,8 +351,64 @@ def build_parser():
     return parser
 
 
+def _finalize_cosrho_args(args):
+    args.beta_actor_pow = float(getattr(args, "beta_actor_pow", DEFAULT_BETA_ACTOR_POW))
+    args.beta_rho_pow = float(getattr(args, "beta_rho_pow", DEFAULT_BETA_RHO_POW))
+    args.xi0 = float(getattr(args, "xi0", DEFAULT_XI0))
+    args.xi_decay_pow = float(getattr(args, "xi_decay_pow", DEFAULT_XI_DECAY_POW))
+    args.rho_beta_peak_init = float(getattr(args, "rho_beta_peak_init", DEFAULT_RHO_BETA_PEAK_INIT))
+    args.rho_beta_peak_final_ratio = float(
+        getattr(args, "rho_beta_peak_final_ratio", DEFAULT_RHO_BETA_PEAK_FINAL_RATIO)
+    )
+    args.rho_beta_min = float(getattr(args, "rho_beta_min", DEFAULT_RHO_BETA_MIN))
+    args.rho_restart_rounds = int(getattr(args, "rho_restart_rounds", DEFAULT_RHO_RESTART_ROUNDS))
+    args.rho_period_mult = int(getattr(args, "rho_period_mult", DEFAULT_RHO_PERIOD_MULT))
+    args.rho_scheduler = RHO_SCHEDULER
+
+    if (args.xi0 < 0.0) or (args.xi0 > 1.0):
+        raise ValueError("xi0 must be in [0, 1]. got xi0={0}".format(args.xi0))
+    if args.xi_decay_pow <= 0.0:
+        raise ValueError("xi_decay_pow must be positive. got xi_decay_pow={0}".format(args.xi_decay_pow))
+    if args.rho_beta_min <= 0.0:
+        raise ValueError("rho_beta_min must be positive. got rho_beta_min={0}".format(args.rho_beta_min))
+    if args.rho_beta_peak_init < args.rho_beta_min:
+        raise ValueError(
+            "rho_beta_peak_init must be greater than or equal to rho_beta_min. got rho_beta_peak_init={0}, rho_beta_min={1}".format(
+                args.rho_beta_peak_init,
+                args.rho_beta_min,
+            )
+        )
+    if args.rho_beta_peak_init > 1.0:
+        raise ValueError(
+            "rho_beta_peak_init must be less than or equal to 1.0. got rho_beta_peak_init={0}".format(
+                args.rho_beta_peak_init
+            )
+        )
+    if (args.rho_beta_peak_final_ratio <= 0.0) or (args.rho_beta_peak_final_ratio > 1.0):
+        raise ValueError(
+            "rho_beta_peak_final_ratio must be in (0, 1]. got rho_beta_peak_final_ratio={0}".format(
+                args.rho_beta_peak_final_ratio
+            )
+        )
+    if args.rho_restart_rounds <= 0:
+        raise ValueError("rho_restart_rounds must be a positive integer. got {0}".format(args.rho_restart_rounds))
+    if args.rho_period_mult < 1:
+        raise ValueError("rho_period_mult must be an integer greater than or equal to 1. got {0}".format(args.rho_period_mult))
+    return args
+
+
+def _apply_run_config(args, output_suffix, message, t_horizon, grad_t, num_new_data_run, q_update_time):
+    print(message)
+    args.run_tag = output_suffix
+    args.T = int(t_horizon)
+    args.grad_T = int(grad_t)
+    args.num_new_data = int(num_new_data_run)
+    args.Q_update_time = int(q_update_time)
+    return _refresh_max_steps(args)
+
+
 def _run_single_seed(args):
-    for output_suffix, message, t_horizon, grad_t, num_new_data_run, q_update_time in FUSED_CPRO_RUNS:
+    for output_suffix, message, t_horizon, grad_t, num_new_data_run, q_update_time in FUSED_CPRO_COSRHO_RUNS:
         run_args = argparse.Namespace(**vars(args))
         run_args = _apply_run_config(
             run_args,
@@ -366,59 +419,44 @@ def _run_single_seed(args):
             num_new_data_run,
             q_update_time,
         )
-        reward_save, cost_save, rho_history, xi_history, rho_labels, drift_history = Fused_CPRO_main(
-            run_args, EXAMPLE_NAME
+        reward_save, cost_save, rho_history, xi_history, rho_labels, drift_history = Fused_CPRO_CosRho_main(
+            run_args,
+            EXAMPLE_NAME,
         )
         _save_mat_with_seed(
-            build_algorithm_artifact_path(
-                BASE_DIR,
-                ALGORITHM_NAME,
-                "Fused_CPRO_reward_{0}.mat".format(output_suffix),
-            ),
+            build_algorithm_artifact_path(BASE_DIR, ALGORITHM_NAME, _build_artifact_name("reward", output_suffix)),
             {"array": reward_save},
             run_args,
-            "Fused_CPRO",
+            ALGORITHM_NAME,
             output_suffix,
         )
         _save_mat_with_seed(
-            build_algorithm_artifact_path(
-                BASE_DIR,
-                ALGORITHM_NAME,
-                "Fused_CPRO_cost_{0}.mat".format(output_suffix),
-            ),
+            build_algorithm_artifact_path(BASE_DIR, ALGORITHM_NAME, _build_artifact_name("cost", output_suffix)),
             {"array": cost_save},
             run_args,
-            "Fused_CPRO",
+            ALGORITHM_NAME,
             output_suffix,
         )
         _save_mat_with_seed(
-            build_algorithm_artifact_path(
-                BASE_DIR,
-                ALGORITHM_NAME,
-                "Fused_CPRO_rho_{0}.mat".format(output_suffix),
-            ),
+            build_algorithm_artifact_path(BASE_DIR, ALGORITHM_NAME, _build_artifact_name("rho", output_suffix)),
             {
                 "array": rho_history,
                 "labels": np.asarray(rho_labels, dtype="U32"),
                 "xi": xi_history,
             },
             run_args,
-            "Fused_CPRO",
+            ALGORITHM_NAME,
             output_suffix,
         )
         _save_mat_with_seed(
-            build_algorithm_artifact_path(
-                BASE_DIR,
-                ALGORITHM_NAME,
-                "Fused_CPRO_drift_{0}.mat".format(output_suffix),
-            ),
+            build_algorithm_artifact_path(BASE_DIR, ALGORITHM_NAME, _build_artifact_name("drift", output_suffix)),
             drift_history,
             run_args,
-            "Fused_CPRO",
+            ALGORITHM_NAME,
             output_suffix,
         )
-        _plot_reuse_probability(BASE_DIR, output_suffix, rho_history, rho_labels, xi_history, run_args.seed)
-        _plot_drift_speed(BASE_DIR, output_suffix, drift_history, run_args.seed)
+        _plot_reuse_probability(output_suffix, rho_history, rho_labels, xi_history, run_args.seed)
+        _plot_drift_speed(output_suffix, drift_history, run_args.seed)
 
 
 def main():
@@ -432,9 +470,13 @@ def main():
     ignored_message = format_ignored_cli_overrides(ignored_options)
     if ignored_message:
         print(ignored_message)
-    args = _finalize_actor_rho_powers(args)
+    args = _finalize_cosrho_args(args)
     args = _resolve_old_policy_args(args)
-    _migrate_legacy_checkpoints(args.checkpoint_root, EXAMPLE_NAME, default_seed=DEFAULT_OLD_POLICY_SEED)
+    _migrate_legacy_checkpoints(
+        args.old_policy_checkpoint_root,
+        EXAMPLE_NAME,
+        default_seed=int(args.old_policy_seed),
+    )
     args = _validate_old_policy_checkpoints(args)
     experiment_seeds = resolve_experiment_seeds(args, DEFAULT_SEED)
     print("experiment seeds:", ", ".join(str(seed_value) for seed_value in experiment_seeds))
