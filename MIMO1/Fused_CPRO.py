@@ -22,7 +22,7 @@ RHO_MIN_NEW_ACTOR = 0.2
 RHO_MIN_OLD_POLICY = 1e-4
 # actor/rho 梯度阶段中 offline 样本占比。
 # xi 的默认值：表示额外离线样本量相对在线样本量的系数。
-# xi 的默认值：表示 offline 分支在 actor/rho 梯度中的权重。
+# xi 的默认值：表示 offline 分支在 actor/rho 梯度与 J 估计中的权重。
 DEFAULT_OFFLINE_WEIGHT = 0.5
 # 每个 old policy 的离线轨迹长度，默认与参考窗口 T 对齐。
 OFFLINE_STEPS_MULTIPLIER = 1
@@ -281,34 +281,108 @@ def _policy_rollout_dataset(example_name, policy, steps, seed, device):
     observation = env.reset()
     states = np.zeros((steps, state_dim), dtype=np.float64)
     actions = np.zeros((steps, action_dim), dtype=np.float64)
+    costs = np.zeros((steps, 1 + constraint_dim), dtype=np.float64)
     for idx in range(int(steps)):
         state = observation
         action = policy.sample_action(state)
         next_state, reward, done, info = env.step(action)
-        _ = _build_costs(reward, info, constraint_dim, constr_lim)
+        costs[idx] = _build_costs(reward, info, constraint_dim, constr_lim)
         states[idx] = state
         actions[idx] = np.asarray(action, dtype=np.float64).reshape(-1)
         observation = next_state
         if done:
             observation = env.reset()
-    return {"state": states, "action": actions}
+    return {"state": states, "action": actions, "costs": costs}
 
 
-def _sample_offline_batch(datasets, batch_size, state_dim, action_dim):
+def _coerce_dataset_sampling_probs(dataset_count, dataset_probs):
+    dataset_count = int(dataset_count)
+    if dataset_count < 0:
+        raise ValueError("dataset_count must be non-negative")
+    if dataset_count == 0:
+        return np.zeros((0,), dtype=np.float64)
+    if dataset_probs is None:
+        return np.full((dataset_count,), 1.0 / float(dataset_count), dtype=np.float64)
+    probs = np.asarray(dataset_probs, dtype=np.float64).reshape(-1)
+    if probs.size != dataset_count:
+        raise ValueError("dataset_probs size mismatch. expected {0}, got {1}".format(dataset_count, probs.size))
+    if (not np.isfinite(probs).all()) or np.any(probs < 0.0):
+        raise ValueError("dataset_probs must be finite and non-negative")
+    prob_sum = float(np.sum(probs))
+    if prob_sum <= EPS:
+        raise ValueError("dataset_probs must sum to a positive value")
+    return probs / prob_sum
+
+
+def _normalize_old_policy_sampling_probs(rho, old_policy_count):
+    old_policy_count = int(old_policy_count)
+    if old_policy_count < 0:
+        raise ValueError("old_policy_count must be non-negative")
+    if old_policy_count == 0:
+        return np.zeros((0,), dtype=np.float64)
+    rho_arr = np.asarray(rho, dtype=np.float64).reshape(-1)
+    if rho_arr.size != old_policy_count + 1:
+        raise ValueError(
+            "rho size mismatch for old-policy normalization. expected {0}, got {1}".format(old_policy_count + 1, rho_arr.size)
+        )
+    old_policy_probs = rho_arr[1:].copy()
+    if (not np.isfinite(old_policy_probs).all()) or np.any(old_policy_probs < 0.0):
+        return np.full((old_policy_count,), 1.0 / float(old_policy_count), dtype=np.float64)
+    prob_sum = float(np.sum(old_policy_probs))
+    if prob_sum <= EPS:
+        return np.full((old_policy_count,), 1.0 / float(old_policy_count), dtype=np.float64)
+    return old_policy_probs / prob_sum
+
+
+def _sample_offline_batch(datasets, batch_size, state_dim, action_dim, dataset_probs=None):
     batch_size = int(batch_size)
     if batch_size <= 0 or len(datasets) <= 0:
         return (
             np.zeros((0, state_dim), dtype=np.float64),
             np.zeros((0, action_dim), dtype=np.float64),
         )
+    dataset_probs = _coerce_dataset_sampling_probs(len(datasets), dataset_probs)
     states = np.zeros((batch_size, state_dim), dtype=np.float64)
     actions = np.zeros((batch_size, action_dim), dtype=np.float64)
     for idx in range(batch_size):
-        ds = datasets[np.random.randint(len(datasets))]
+        ds = datasets[int(np.random.choice(len(datasets), p=dataset_probs))]
         row = np.random.randint(ds["state"].shape[0])
         states[idx] = ds["state"][row]
         actions[idx] = ds["action"][row]
     return states, actions
+
+
+def _sample_offline_cost_batch(datasets, batch_size, cost_dim, dataset_probs=None):
+    batch_size = int(batch_size)
+    if batch_size <= 0 or len(datasets) <= 0:
+        return np.zeros((0, cost_dim), dtype=np.float64)
+    dataset_probs = _coerce_dataset_sampling_probs(len(datasets), dataset_probs)
+    costs = np.zeros((batch_size, cost_dim), dtype=np.float64)
+    for idx in range(batch_size):
+        ds = datasets[int(np.random.choice(len(datasets), p=dataset_probs))]
+        row = np.random.randint(ds["costs"].shape[0])
+        costs[idx] = ds["costs"][row]
+    return costs
+
+
+def _estimate_mixed_func_value_tilda(online_costs_batch, offline_datasets, xi, use_offline_data, dataset_probs=None):
+    online_costs = np.asarray(online_costs_batch, dtype=np.float64)
+    if online_costs.ndim != 2 or online_costs.shape[0] <= 0:
+        raise ValueError("online_costs_batch must be a non-empty 2D array")
+    online_value = np.mean(online_costs, axis=0)
+    if not use_offline_data:
+        return online_value
+    offline_costs = _sample_offline_cost_batch(
+        offline_datasets,
+        online_costs.shape[0],
+        online_costs.shape[1],
+        dataset_probs=dataset_probs,
+    )
+    if offline_costs.shape[0] <= 0:
+        return online_value
+    xi = min(max(float(xi), 0.0), 1.0)
+    offline_value = np.mean(offline_costs, axis=0)
+    return (1.0 - xi) * online_value + xi * offline_value
 
 
 def _coerce_rho_lower_bounds(rho_lower_bounds, simplex_dim):
@@ -399,6 +473,7 @@ def _build_policy_gradient_batch_impl(
     state_dim,
     action_dim,
     use_offline_data,
+    dataset_probs=None,
 ):
     _ = xi
     online_states = np.asarray(online_state_batch, dtype=np.float64).copy()
@@ -421,7 +496,13 @@ def _build_policy_gradient_batch_impl(
     fused_state_batch[:n_online] = online_states
     fused_action_batch[:n_online] = online_actions
     if n_offline > 0:
-        offline_states, offline_actions = _sample_offline_batch(offline_datasets, n_offline, state_dim, action_dim)
+        offline_states, offline_actions = _sample_offline_batch(
+            offline_datasets,
+            n_offline,
+            state_dim,
+            action_dim,
+            dataset_probs=dataset_probs,
+        )
         fused_state_batch[n_online:] = offline_states
         fused_action_batch[n_online:] = offline_actions
     return fused_state_batch, fused_action_batch
@@ -989,6 +1070,7 @@ def _select_policy_gradient_batch(
     state_dim,
     action_dim,
     use_offline_data,
+    dataset_probs=None,
 ):
     # HRL 分支固定只使用在线样本；Fused-CPRO 保持在线/离线混合更新。
     return _build_policy_gradient_batch_impl(
@@ -1000,6 +1082,7 @@ def _select_policy_gradient_batch(
         state_dim,
         action_dim,
         use_offline_data,
+        dataset_probs=dataset_probs,
     )
 
 
@@ -1012,6 +1095,7 @@ def _select_policy_gradient_batch_impl(
     state_dim,
     action_dim,
     use_offline_data,
+    dataset_probs=None,
 ):
     # HRL keeps the policy-gradient batch purely online.
     return _build_policy_gradient_batch_impl(
@@ -1023,6 +1107,7 @@ def _select_policy_gradient_batch_impl(
         state_dim,
         action_dim,
         use_offline_data,
+        dataset_probs=dataset_probs,
     )
 
 
@@ -1125,8 +1210,20 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
                 gamma_reward = 0.0
                 gamma_cost = 0.0
 
+            if use_offline_data:
+                old_policy_sampling_probs = _normalize_old_policy_sampling_probs(rho, len(old_policies))
+            else:
+                old_policy_sampling_probs = None
+
             state_buffer, action_buffer, costs_buffer, next_state_buffer, aver_reward_buffer, aver_cost_buffer = buffer.take_experiences()
-            func_value_tilda = np.mean(costs_buffer, axis=0)
+            # 离线版 Fused-CPRO 的 J 估计与 actor/rho 梯度共用 xi 混合权重。
+            func_value_tilda = _estimate_mixed_func_value_tilda(
+                costs_buffer,
+                offline_datasets,
+                xi,
+                use_offline_data,
+                dataset_probs=old_policy_sampling_probs,
+            )
             func_value = (1.0 - alpha) * func_value + alpha * func_value_tilda
             if (update_index % update_time_per_episode == 0) and (q_update_index == 1):
                 print("{0}_EPISODE:".format(algorithm_label), print_index)
@@ -1166,6 +1263,7 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
                     state_dim,
                     action_dim,
                     use_offline_data,
+                    dataset_probs=old_policy_sampling_probs,
                 )
 
                 fused_state_torch = torch.tensor(fused_state_batch, dtype=torch.float, device=device)

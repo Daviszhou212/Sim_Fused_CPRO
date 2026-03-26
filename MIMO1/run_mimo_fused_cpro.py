@@ -48,7 +48,7 @@ DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
 
 # old policy 选择：显式指定 SLDAC checkpoint，不参与任何参数同步。
 OLD_POLICY_BQ_LIST = [(100, 10)]
-OLD_POLICY_PRETRAIN_EPISODE = 10
+OLD_POLICY_PRETRAIN_EPISODE = 50
 OLD_POLICY_CHECKPOINT_ROOT = os.path.join(BASE_DIR, "checkpoints", "SLDAC")
 
 
