@@ -20,7 +20,7 @@ SLDAC_RUNS = [
 ]
 
 DEFAULT_SEED = 1
-DEFAULT_SEEDS = (0, 1, 2, 3, 4)
+DEFAULT_SEEDS = (5,6,7,8,9)
 ALGORITHM_NAME = "SLDAC"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LEGACY_CHECKPOINT_PREFIX = "episode_"
