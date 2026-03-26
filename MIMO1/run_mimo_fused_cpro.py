@@ -36,12 +36,15 @@ DEFAULT_NUM_UPDATE_TIME = DEFAULT_EPISODE * DEFAULT_UPDATE_TIME_PER_EPISODE
 DEFAULT_ALPHA_POW = 0.5
 DEFAULT_BETA_ACTOR_POW = 0.6
 DEFAULT_BETA_RHO_POW = 0.9
-DEFAULT_XI0 = 1.0
+# xi0 表示 offline 分支权重；0.5 表示 online/offline 两个分支各占一半。
+DEFAULT_XI0 = 0.5
 DEFAULT_ETA_POW = 0.01
 DEFAULT_GAMMA_POW_REWARD = 0.2
 DEFAULT_GAMMA_POW_COST = 0.2
 DEFAULT_TAU_REWARD = 1.0
 DEFAULT_TAU_COST = 1.0
+DEFAULT_RHO_MIN_NEW_ACTOR = 1e-4
+DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
 
 # old policy 选择：显式指定 SLDAC checkpoint，不参与任何参数同步。
 OLD_POLICY_BQ_LIST = [(100, 10)]
@@ -67,6 +70,8 @@ def build_python_config():
         "gamma_pow_cost": float(DEFAULT_GAMMA_POW_COST),
         "tau_reward": float(DEFAULT_TAU_REWARD),
         "tau_cost": float(DEFAULT_TAU_COST),
+        "rho_min_new_actor": float(DEFAULT_RHO_MIN_NEW_ACTOR),
+        "rho_min_old_policy": float(DEFAULT_RHO_MIN_OLD_POLICY),
         "device": str(DEVICE),
         "old_policies": None,
         "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
@@ -244,6 +249,28 @@ def _finalize_actor_rho_powers(args):
     return args
 
 
+def _finalize_rho_lower_bounds(args):
+    args.rho_min_new_actor = float(getattr(args, "rho_min_new_actor", DEFAULT_RHO_MIN_NEW_ACTOR))
+    args.rho_min_old_policy = float(getattr(args, "rho_min_old_policy", DEFAULT_RHO_MIN_OLD_POLICY))
+    if args.rho_min_new_actor < 0.0:
+        raise ValueError("rho_min_new_actor must be non-negative. got {0}".format(args.rho_min_new_actor))
+    if args.rho_min_old_policy < 0.0:
+        raise ValueError("rho_min_old_policy must be non-negative. got {0}".format(args.rho_min_old_policy))
+    run_tags = [tag.strip() for tag in str(getattr(args, "old_policy_run_tags", "")).split(",") if tag.strip()]
+    rho_dim = 2 + len(run_tags)
+    rho_floor_sum = float(args.rho_min_new_actor) + float(max(rho_dim - 1, 0)) * float(args.rho_min_old_policy)
+    if rho_floor_sum > 1.0:
+        raise ValueError(
+            "rho lower bounds are infeasible for rho_dim={0}. got rho_min_new_actor={1}, rho_min_old_policy={2}, sum={3}".format(
+                rho_dim,
+                args.rho_min_new_actor,
+                args.rho_min_old_policy,
+                rho_floor_sum,
+            )
+        )
+    return args
+
+
 def _apply_run_config(args, output_suffix, message, t_horizon, grad_t, num_new_data_run, q_update_time):
     print(message)
     args.run_tag = output_suffix
@@ -275,7 +302,7 @@ def _plot_reuse_probability(base_dir, output_suffix, rho_history, rho_labels, xi
 
     axes[1].plot(x, xi_history, color="#222222", linewidth=2.0)
     axes[1].set_xlabel("Episode")
-    axes[1].set_ylabel("xi")
+    axes[1].set_ylabel("xi (offline weight)")
     axes[1].grid(alpha=0.25)
 
     fig.tight_layout()
@@ -346,6 +373,8 @@ def build_parser():
     parser.add_argument("--gamma_pow_cost", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--tau_reward", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--tau_cost", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--rho-min-new-actor", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--rho-min-old-policy", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--old-policies", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-seed", type=int, default=argparse.SUPPRESS)
@@ -434,6 +463,7 @@ def main():
         print(ignored_message)
     args = _finalize_actor_rho_powers(args)
     args = _resolve_old_policy_args(args)
+    args = _finalize_rho_lower_bounds(args)
     _migrate_legacy_checkpoints(args.checkpoint_root, EXAMPLE_NAME, default_seed=DEFAULT_OLD_POLICY_SEED)
     args = _validate_old_policy_checkpoints(args)
     experiment_seeds = resolve_experiment_seeds(args, DEFAULT_SEED)

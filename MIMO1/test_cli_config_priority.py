@@ -10,6 +10,9 @@ def build_python_config():
         "seeds": "1,2,3,4",
         "episode": 60,
         "device": "cpu",
+        "xi0": 0.5,
+        "rho_min_new_actor": 0.2,
+        "rho_min_old_policy": 1e-4,
         "old_policy_pretrain_episode": 40,
         "old_policy_checkpoint_root": "checkpoints/SLDAC",
     }
@@ -33,6 +36,9 @@ class CliConfigPriorityTest(unittest.TestCase):
         cli_args = argparse.Namespace(
             seed=99,
             episode=5,
+            xi0=0.9,
+            rho_min_new_actor=0.35,
+            rho_min_old_policy=0.02,
             old_policy_pretrain_episode=12,
             old_policy_checkpoint_root="tmp/checkpoints",
         )
@@ -45,6 +51,12 @@ class CliConfigPriorityTest(unittest.TestCase):
                 "99",
                 "--episode",
                 "5",
+                "--xi0",
+                "0.9",
+                "--rho-min-new-actor",
+                "0.35",
+                "--rho-min-old-policy",
+                "0.02",
                 "--old-policy-pretrain-episode",
                 "12",
                 "--old-policy-checkpoint-root",
@@ -53,6 +65,9 @@ class CliConfigPriorityTest(unittest.TestCase):
         )
         self.assertEqual(args.seed, 1)
         self.assertEqual(args.episode, 60)
+        self.assertEqual(args.xi0, 0.5)
+        self.assertEqual(args.rho_min_new_actor, 0.2)
+        self.assertEqual(args.rho_min_old_policy, 1e-4)
         self.assertEqual(args.old_policy_pretrain_episode, 40)
         self.assertEqual(args.old_policy_checkpoint_root, "checkpoints/SLDAC")
         self.assertEqual(
@@ -60,6 +75,9 @@ class CliConfigPriorityTest(unittest.TestCase):
             [
                 "--seed",
                 "--episode",
+                "--xi0",
+                "--rho-min-new-actor",
+                "--rho-min-old-policy",
                 "--old-policy-pretrain-episode",
                 "--old-policy-checkpoint-root",
             ],

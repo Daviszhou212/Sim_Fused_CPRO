@@ -208,15 +208,16 @@ class Critic:
             soft_update_twoloop(self.target_net1, self.net1, gamma_cost, Q_update_time, Q_update_index)
 
     def critic_value(self, state_batch_torch, action_batch_torch):
-        Q_hat = np.matrix(np.zeros((self.num_new_data, 1 + self.constraint_dim)))
-        Q_hat[:, 0] = self.target_net0.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy()
+        batch_size = int(state_batch_torch.shape[0])
+        Q_hat = np.zeros((batch_size, 1 + self.constraint_dim), dtype=np.float64)
+        Q_hat[:, 0] = self.target_net0.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy().reshape(-1)
         if "MIMO" in self.example_name:
-            Q_hat[:, 1] = self.target_net1.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy()
-            Q_hat[:, 2] = self.target_net2.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy()
-            Q_hat[:, 3] = self.target_net3.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy()
-            Q_hat[:, 4] = self.target_net4.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy()
+            Q_hat[:, 1] = self.target_net1.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy().reshape(-1)
+            Q_hat[:, 2] = self.target_net2.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy().reshape(-1)
+            Q_hat[:, 3] = self.target_net3.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy().reshape(-1)
+            Q_hat[:, 4] = self.target_net4.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy().reshape(-1)
         else:
-            Q_hat[:, 1] = self.net1.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy()
+            Q_hat[:, 1] = self.net1.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy().reshape(-1)
         Q_hat_torch = torch.tensor(Q_hat, dtype=torch.float, device=self.device)
 
         return Q_hat_torch

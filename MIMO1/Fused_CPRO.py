@@ -18,9 +18,12 @@ from model import GaussianPolicy_CLQR, GaussianPolicy_MIMO
 # 策略库配置：每个场景固定使用 1 个 DK 策略 + 2 个镜像 SLDAC 策略。
 NUM_SLDAC_LIBRARY_POLICIES = 2
 # rho 的单纯形下界，避免对数与数值更新退化。
-RHO_MIN = 1e-4
+RHO_MIN_NEW_ACTOR = 0.2
+RHO_MIN_OLD_POLICY = 1e-4
 # actor/rho 梯度阶段中 offline 样本占比。
-OFFLINE_BATCH_RATIO = 0.5
+# xi 的默认值：表示额外离线样本量相对在线样本量的系数。
+# xi 的默认值：表示 offline 分支在 actor/rho 梯度中的权重。
+DEFAULT_OFFLINE_WEIGHT = 0.5
 # 每个 old policy 的离线轨迹长度，默认与参考窗口 T 对齐。
 OFFLINE_STEPS_MULTIPLIER = 1
 # DK 策略用于 log_prob 评估时的固定高斯标准差。
@@ -147,6 +150,18 @@ def _flatten_actor_grad(actor, log_std_grad):
     else:
         grads.append(log_std_grad.view(-1))
     return torch.cat(grads).detach().cpu().numpy().astype(np.float64, copy=False)
+
+
+def _merge_log_std_grads(*grads):
+    merged = None
+    for grad in grads:
+        if grad is None:
+            continue
+        if merged is None:
+            merged = grad.detach().clone()
+        else:
+            merged = merged + grad.detach()
+    return merged
 
 
 def _set_actor_from_flat(actor, flat_params):
@@ -296,25 +311,120 @@ def _sample_offline_batch(datasets, batch_size, state_dim, action_dim):
     return states, actions
 
 
-def _normalize_simplex(rho, rho_min):
-    arr = np.asarray(rho, dtype=np.float64).reshape(-1)
-    if arr.size <= 0:
-        raise ValueError("rho must be non-empty")
-    arr = np.clip(arr, float(rho_min), None)
-    arr = arr / np.sum(arr)
+def _coerce_rho_lower_bounds(rho_lower_bounds, simplex_dim):
+    simplex_dim = int(simplex_dim)
+    if simplex_dim <= 0:
+        raise ValueError("simplex_dim must be positive")
+    arr = np.asarray(rho_lower_bounds, dtype=np.float64).reshape(-1)
+    if arr.size == 1:
+        arr = np.full((simplex_dim,), float(arr[0]), dtype=np.float64)
+    elif arr.size != simplex_dim:
+        raise ValueError(
+            "rho_lower_bounds size mismatch. expected {0}, got {1}".format(simplex_dim, arr.size)
+        )
+    if (not np.isfinite(arr).all()) or np.any(arr < 0.0):
+        raise ValueError("rho_lower_bounds must be finite and non-negative")
+    if float(np.sum(arr)) > 1.0 + EPS:
+        raise ValueError("rho lower bounds are infeasible: sum={0:.6f} > 1".format(float(np.sum(arr))))
     return arr
 
 
-def _build_simplex_constraints(constr, paras_cvx, simplex_dim, rho_min):
+def _build_rho_lower_bounds(simplex_dim, rho_min_new_actor=RHO_MIN_NEW_ACTOR, rho_min_old_policy=RHO_MIN_OLD_POLICY):
+    simplex_dim = int(simplex_dim)
+    if simplex_dim <= 0:
+        raise ValueError("simplex_dim must be positive")
+    lower_bounds = np.full((simplex_dim,), float(rho_min_old_policy), dtype=np.float64)
+    lower_bounds[0] = float(rho_min_new_actor)
+    return _coerce_rho_lower_bounds(lower_bounds, simplex_dim)
+
+
+def _resolve_rho_lower_bounds(args, simplex_dim):
+    return _build_rho_lower_bounds(
+        simplex_dim,
+        rho_min_new_actor=float(getattr(args, "rho_min_new_actor", RHO_MIN_NEW_ACTOR)),
+        rho_min_old_policy=float(getattr(args, "rho_min_old_policy", RHO_MIN_OLD_POLICY)),
+    )
+
+
+def _project_simplex(values, simplex_sum):
+    arr = np.asarray(values, dtype=np.float64).reshape(-1)
+    if arr.size <= 0:
+        raise ValueError("values must be non-empty")
+    target_sum = float(simplex_sum)
+    if target_sum < -EPS:
+        raise ValueError("simplex_sum must be non-negative")
+    if target_sum <= EPS:
+        return np.zeros_like(arr)
+    u = np.sort(arr)[::-1]
+    cssv = np.cumsum(u) - target_sum
+    ind = np.arange(1, arr.size + 1, dtype=np.float64)
+    cond = u - cssv / ind > 0
+    if np.any(cond):
+        rho_idx = np.nonzero(cond)[0][-1]
+        theta = cssv[rho_idx] / float(rho_idx + 1)
+    else:
+        theta = cssv[-1] / float(arr.size)
+    return np.maximum(arr - theta, 0.0)
+
+
+def _normalize_simplex(rho, rho_lower_bounds):
+    arr = np.asarray(rho, dtype=np.float64).reshape(-1)
+    if arr.size <= 0:
+        raise ValueError("rho must be non-empty")
+    lower_bounds = _coerce_rho_lower_bounds(rho_lower_bounds, arr.size)
+    residual = 1.0 - float(np.sum(lower_bounds))
+    projected = _project_simplex(arr - lower_bounds, residual)
+    return lower_bounds + projected
+
+
+def _build_simplex_constraints(constr, paras_cvx, simplex_dim, rho_lower_bounds):
     if simplex_dim is None or int(simplex_dim) <= 0:
         return constr
-    constr += [paras_cvx[:simplex_dim] >= float(rho_min), cp.sum(paras_cvx[:simplex_dim]) == 1]
+    lower_bounds = _coerce_rho_lower_bounds(rho_lower_bounds, int(simplex_dim))
+    constr += [paras_cvx[:simplex_dim] >= lower_bounds, cp.sum(paras_cvx[:simplex_dim]) == 1]
     return constr
 
 
 def _get_xi(update_index, decay_pow, xi0):
     xi = float(xi0) / ((int(update_index) + 1) ** float(decay_pow))
     return min(max(xi, 0.0), 1.0)
+
+
+def _build_policy_gradient_batch_impl(
+    online_state_batch,
+    online_action_batch,
+    offline_datasets,
+    xi,
+    grad_t,
+    state_dim,
+    action_dim,
+    use_offline_data,
+):
+    _ = xi
+    online_states = np.asarray(online_state_batch, dtype=np.float64).copy()
+    online_actions = np.asarray(online_action_batch, dtype=np.float64).copy()
+    grad_t = int(grad_t)
+    if grad_t <= 0:
+        raise ValueError("grad_t must be a positive integer")
+    if online_states.shape[0] < grad_t or online_actions.shape[0] < grad_t:
+        raise ValueError("online policy-gradient batch is shorter than grad_t")
+    online_states = online_states[-grad_t:]
+    online_actions = online_actions[-grad_t:]
+    if not use_offline_data:
+        return online_states, online_actions
+
+    n_online = grad_t
+    n_offline = grad_t
+    total_batch = n_online + n_offline
+    fused_state_batch = np.zeros((total_batch, state_dim), dtype=np.float64)
+    fused_action_batch = np.zeros((total_batch, action_dim), dtype=np.float64)
+    fused_state_batch[:n_online] = online_states
+    fused_action_batch[:n_online] = online_actions
+    if n_offline > 0:
+        offline_states, offline_actions = _sample_offline_batch(offline_datasets, n_offline, state_dim, action_dim)
+        fused_state_batch[n_online:] = offline_states
+        fused_action_batch[n_online:] = offline_actions
+    return fused_state_batch, fused_action_batch
 
 
 def _get_rho_scheduler_mode(args):
@@ -450,7 +560,7 @@ def _solve_problem(prob):
     return prob.status
 
 
-def _policy_update(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost, simplex_dim=None, rho_min=0.0):
+def _policy_update(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost, simplex_dim=None, rho_lower_bounds=0.0):
     if cp is None:
         raise ModuleNotFoundError("cvxpy is required for Fused_CPRO.")
     if (not np.isfinite(func_value_np).all()) or (not np.isfinite(grad_np).all()) or (not np.isfinite(paras_t_np).all()):
@@ -462,7 +572,7 @@ def _policy_update(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost, sim
         paras_t_np,
         tau_cost,
         simplex_dim=simplex_dim,
-        rho_min=rho_min,
+        rho_lower_bounds=rho_lower_bounds,
     )
     if x_val == np.inf or paras_bar is None or (not np.isfinite(paras_bar).all()):
         return paras_t_np
@@ -474,14 +584,14 @@ def _policy_update(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost, sim
             tau_reward=tau_reward,
             tau_cost=tau_cost,
             simplex_dim=simplex_dim,
-            rho_min=rho_min,
+            rho_lower_bounds=rho_lower_bounds,
         )
         if paras_obj is not None and np.isfinite(paras_obj).all():
             return paras_obj
     return paras_bar
 
 
-def _objective_update(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost, simplex_dim=None, rho_min=0.0):
+def _objective_update(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost, simplex_dim=None, rho_lower_bounds=0.0):
     m = grad_np.shape[0] - 1
     n = grad_np.shape[1]
     tau_np = tau_cost * np.ones((m + 1,), dtype=np.float64)
@@ -489,7 +599,7 @@ def _objective_update(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost, 
     paras_cvx = cp.Variable(shape=(n,))
     obj = func_value_np[0] + grad_np[0].T @ (paras_cvx - paras_t_np) + tau_np[0] * cp.sum_squares(paras_cvx - paras_t_np)
     constr = []
-    constr = _build_simplex_constraints(constr, paras_cvx, simplex_dim, rho_min)
+    constr = _build_simplex_constraints(constr, paras_cvx, simplex_dim, rho_lower_bounds)
     for idx in range(1, m + 1):
         constr += [func_value_np[idx] + grad_np[idx].T @ (paras_cvx - paras_t_np) + tau_np[idx] * cp.sum_squares(paras_cvx - paras_t_np) <= 0]
     prob = cp.Problem(cp.Minimize(obj), constr)
@@ -497,7 +607,7 @@ def _objective_update(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost, 
     return paras_cvx.value, status
 
 
-def _feasible_update(func_value_np, grad_np, paras_t_np, tau_cost, simplex_dim=None, rho_min=0.0):
+def _feasible_update(func_value_np, grad_np, paras_t_np, tau_cost, simplex_dim=None, rho_lower_bounds=0.0):
     m = grad_np.shape[0] - 1
     n = grad_np.shape[1]
     func_value = func_value_np[1:]
@@ -507,7 +617,7 @@ def _feasible_update(func_value_np, grad_np, paras_t_np, tau_cost, simplex_dim=N
     x_cvx = cp.Variable()
     obj = x_cvx
     constr = []
-    constr = _build_simplex_constraints(constr, paras_cvx, simplex_dim, rho_min)
+    constr = _build_simplex_constraints(constr, paras_cvx, simplex_dim, rho_lower_bounds)
     for idx in range(m):
         constr += [func_value[idx] + grad_val[idx].T @ (paras_cvx - paras_t_np) + tau_np[idx] * cp.sum_squares(paras_cvx - paras_t_np) <= x_cvx]
     prob = cp.Problem(cp.Minimize(obj), constr)
@@ -515,14 +625,19 @@ def _feasible_update(func_value_np, grad_np, paras_t_np, tau_cost, simplex_dim=N
     return prob.value, paras_cvx.value, status
 
 
-def _build_mixture_log_prob(state_batch_torch, action_batch_torch, actor_new, old_policies, rho, rho_min):
-    rho_torch = torch.tensor(rho, dtype=torch.float, device=state_batch_torch.device, requires_grad=True)
+def _build_mixture_log_prob(state_batch_torch, action_batch_torch, actor_new, old_policies, rho, rho_lower_bounds, rho_torch=None):
+    if rho_torch is None:
+        rho_torch = torch.tensor(rho, dtype=torch.float, device=state_batch_torch.device, requires_grad=True)
     log_prob_new, log_std_leaf = _log_prob_batch(actor_new, state_batch_torch, action_batch_torch, require_grad=True)
     log_prob_list = [log_prob_new]
     for policy in old_policies:
         log_prob_list.append(policy.log_prob_batch(state_batch_torch, action_batch_torch))
     log_pi = torch.stack(log_prob_list, dim=1)
-    rho_safe = torch.clamp(rho_torch, min=float(rho_min))
+    lower_bounds = _coerce_rho_lower_bounds(rho_lower_bounds, len(rho))
+    rho_safe = torch.maximum(
+        rho_torch,
+        torch.tensor(lower_bounds, dtype=rho_torch.dtype, device=state_batch_torch.device),
+    )
     log_mix = torch.logsumexp(log_pi + torch.log(rho_safe).view(1, -1), dim=1)
     return log_mix, rho_torch, log_std_leaf
 
@@ -537,6 +652,13 @@ def _q_head_normalize(q_hat):
     for idx in range(1, out.shape[1]):
         out[:, idx] = (out[:, idx] - np.mean(out[:, idx])) / reward_std
     return out
+
+
+def _blend_online_offline_loss(loss_online, loss_offline, xi, use_offline_data):
+    if (not use_offline_data) or loss_offline is None:
+        return loss_online
+    xi = float(xi)
+    return (1.0 - xi) * loss_online + xi * loss_offline
 
 
 def _prcrl_q_head_normalize(q_hat):
@@ -714,7 +836,7 @@ def _train_sldac_like_actor(args, example_name, seed):
     alpha_pow = float(args.alpha_pow)
     beta_actor_pow = float(getattr(args, "beta_actor_pow", getattr(args, "beta_pow", 0.7)))
     beta_rho_pow = float(getattr(args, "beta_rho_pow", beta_actor_pow))
-    xi0 = float(getattr(args, "xi0", OFFLINE_BATCH_RATIO))
+    xi0 = float(getattr(args, "xi0", DEFAULT_OFFLINE_WEIGHT))
     if beta_rho_pow <= beta_actor_pow:
         raise ValueError(
             "beta_rho_pow must be greater than beta_actor_pow. got beta_actor_pow={0}, beta_rho_pow={1}".format(
@@ -723,7 +845,7 @@ def _train_sldac_like_actor(args, example_name, seed):
             )
         )
     if (xi0 < 0.0) or (xi0 > 1.0):
-        raise ValueError("xi0 must be in [0, 1]. got xi0={0}".format(xi0))
+        raise ValueError("xi0 must be in [0, 1] as offline weight. got xi0={0}".format(xi0))
     eta_pow = float(args.eta_pow)
     gamma_pow_reward = float(args.gamma_pow_reward)
     gamma_pow_cost = float(args.gamma_pow_cost)
@@ -869,24 +991,16 @@ def _select_policy_gradient_batch(
     use_offline_data,
 ):
     # HRL 分支固定只使用在线样本；Fused-CPRO 保持在线/离线混合更新。
-    if not use_offline_data:
-        return (
-            np.asarray(online_state_batch, dtype=np.float64).copy(),
-            np.asarray(online_action_batch, dtype=np.float64).copy(),
-        )
-
-    n_online = int(round((1.0 - float(xi)) * grad_t))
-    n_online = min(max(n_online, 1), grad_t)
-    n_offline = grad_t - n_online
-    fused_state_batch = np.zeros((grad_t, state_dim), dtype=np.float64)
-    fused_action_batch = np.zeros((grad_t, action_dim), dtype=np.float64)
-    fused_state_batch[:n_online] = online_state_batch[-n_online:]
-    fused_action_batch[:n_online] = online_action_batch[-n_online:]
-    if n_offline > 0:
-        offline_states, offline_actions = _sample_offline_batch(offline_datasets, n_offline, state_dim, action_dim)
-        fused_state_batch[n_online:] = offline_states
-        fused_action_batch[n_online:] = offline_actions
-    return fused_state_batch, fused_action_batch
+    return _build_policy_gradient_batch_impl(
+        online_state_batch,
+        online_action_batch,
+        offline_datasets,
+        xi,
+        grad_t,
+        state_dim,
+        action_dim,
+        use_offline_data,
+    )
 
 
 def _select_policy_gradient_batch_impl(
@@ -900,24 +1014,16 @@ def _select_policy_gradient_batch_impl(
     use_offline_data,
 ):
     # HRL keeps the policy-gradient batch purely online.
-    if not use_offline_data:
-        return (
-            np.asarray(online_state_batch, dtype=np.float64).copy(),
-            np.asarray(online_action_batch, dtype=np.float64).copy(),
-        )
-
-    n_online = int(round((1.0 - float(xi)) * grad_t))
-    n_online = min(max(n_online, 1), grad_t)
-    n_offline = grad_t - n_online
-    fused_state_batch = np.zeros((grad_t, state_dim), dtype=np.float64)
-    fused_action_batch = np.zeros((grad_t, action_dim), dtype=np.float64)
-    fused_state_batch[:n_online] = online_state_batch[-n_online:]
-    fused_action_batch[:n_online] = online_action_batch[-n_online:]
-    if n_offline > 0:
-        offline_states, offline_actions = _sample_offline_batch(offline_datasets, n_offline, state_dim, action_dim)
-        fused_state_batch[n_online:] = offline_states
-        fused_action_batch[n_online:] = offline_actions
-    return fused_state_batch, fused_action_batch
+    return _build_policy_gradient_batch_impl(
+        online_state_batch,
+        online_action_batch,
+        offline_datasets,
+        xi,
+        grad_t,
+        state_dim,
+        action_dim,
+        use_offline_data,
+    )
 
 
 def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, xi0):
@@ -937,7 +1043,7 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
     rho_scheduler_config = _build_rho_scheduler_config(args, beta_actor_pow)
     xi0 = float(xi0)
     if (xi0 < 0.0) or (xi0 > 1.0):
-        raise ValueError("xi0 must be in [0, 1]. got xi0={0}".format(xi0))
+        raise ValueError("xi0 must be in [0, 1] as offline weight. got xi0={0}".format(xi0))
     eta_pow = float(args.eta_pow)
     gamma_pow_reward = float(args.gamma_pow_reward)
     gamma_pow_cost = float(args.gamma_pow_cost)
@@ -968,8 +1074,9 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
     buffer = _make_buffer(example_name, t_horizon, window, num_new_data, state_dim, action_dim, constraint_dim)
     critic = Critic(example_name, grad_t, state_dim, action_dim, constraint_dim, q_update_time, device)
 
+    rho_lower_bounds = _resolve_rho_lower_bounds(args, len(old_policies) + 1)
     rho = np.ones((len(old_policies) + 1,), dtype=np.float64)
-    rho = _normalize_simplex(rho, RHO_MIN)
+    rho = _normalize_simplex(rho, rho_lower_bounds)
     theta_actor = _flatten_actor(actor_new)
     theta_dim = rho.size + theta_actor.size
     func_value = np.zeros((constraint_dim + 1,), dtype=np.float64)
@@ -1031,7 +1138,7 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
                 print(_format_rho_debug_line(rho_labels, rho))
                 if use_offline_data:
                     xi_history_save.append(float(xi))
-                    print("xi:", float(xi))
+                    print("xi_offline_weight:", float(xi))
                 print_index += 1
 
             online_state_batch = state_buffer[(2 * t_horizon - grad_t):2 * t_horizon]
@@ -1066,22 +1173,51 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
                 q_hat_torch = critic.critic_value(fused_state_torch, fused_action_torch)
                 q_hat = _q_head_normalize(q_hat_torch.detach().cpu().numpy())
                 q_hat_torch = torch.tensor(q_hat, dtype=torch.float, device=device)
+                online_batch_size = grad_t
+                online_state_torch = fused_state_torch[:online_batch_size]
+                online_action_torch = fused_action_torch[:online_batch_size]
+                q_hat_online_torch = q_hat_torch[:online_batch_size]
+                offline_state_torch = fused_state_torch[online_batch_size:]
+                offline_action_torch = fused_action_torch[online_batch_size:]
+                q_hat_offline_torch = q_hat_torch[online_batch_size:]
 
                 grad_tilda = np.zeros_like(grad)
                 for head in range(constraint_dim + 1):
                     _zero_actor_extra_grad(actor_new)
-                    log_mix, rho_torch, log_std_leaf = _build_mixture_log_prob(
-                        fused_state_torch,
-                        fused_action_torch,
+                    rho_torch = torch.tensor(rho, dtype=torch.float, device=device, requires_grad=True)
+                    log_mix_online, rho_torch, log_std_online = _build_mixture_log_prob(
+                        online_state_torch,
+                        online_action_torch,
                         actor_new,
                         old_policies,
                         rho,
-                        RHO_MIN,
+                        rho_lower_bounds,
+                        rho_torch=rho_torch,
                     )
-                    actor_loss = (q_hat_torch[:, head] * log_mix).mean()
+                    actor_loss_online = (q_hat_online_torch[:, head] * log_mix_online).mean()
+                    log_std_offline = None
+                    actor_loss_offline = None
+                    if use_offline_data and q_hat_offline_torch.shape[0] > 0:
+                        log_mix_offline, rho_torch, log_std_offline = _build_mixture_log_prob(
+                            offline_state_torch,
+                            offline_action_torch,
+                            actor_new,
+                            old_policies,
+                            rho,
+                            rho_lower_bounds,
+                            rho_torch=rho_torch,
+                        )
+                        actor_loss_offline = (q_hat_offline_torch[:, head] * log_mix_offline).mean()
+                    actor_loss = _blend_online_offline_loss(actor_loss_online, actor_loss_offline, xi, use_offline_data)
                     actor_loss.backward()
                     rho_grad = rho_torch.grad.detach().cpu().numpy().astype(np.float64, copy=False)
-                    actor_grad = _flatten_actor_grad(actor_new, log_std_leaf.grad)
+                    actor_grad = _flatten_actor_grad(
+                        actor_new,
+                        _merge_log_std_grads(
+                            log_std_online.grad,
+                            None if log_std_offline is None else log_std_offline.grad,
+                        ),
+                    )
                     grad_tilda[head] = np.concatenate((rho_grad, actor_grad), axis=0)
 
                 grad = (1.0 - alpha) * grad + alpha * grad_tilda
@@ -1094,13 +1230,13 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
                     tau_reward=tau_reward,
                     tau_cost=tau_cost,
                     simplex_dim=rho.size,
-                    rho_min=RHO_MIN,
+                    rho_lower_bounds=rho_lower_bounds,
                 )
                 rho_bar = theta_bar[:rho.size]
                 actor_bar = theta_bar[rho.size:]
                 rho_next = (1.0 - beta_rho) * rho + beta_rho * rho_bar
                 actor_next = (1.0 - beta_actor) * actor_now + beta_actor * actor_bar
-                rho_applied = _normalize_simplex(rho_next, RHO_MIN)
+                rho_applied = _normalize_simplex(rho_next, rho_lower_bounds)
                 actor_drift_save.append(_rms_drift(actor_next, actor_now))
                 critic_drift_save.append(critic_drift)
                 rho_drift_save.append(_rms_drift(rho_applied, rho))
@@ -1168,8 +1304,9 @@ def _run_prcrl_main(args, example_name):
     rho_labels = _build_old_policy_labels(args)
     buffer = _make_buffer(example_name, t_horizon, window, num_new_data, state_dim, action_dim, constraint_dim)
 
+    rho_lower_bounds = _resolve_rho_lower_bounds(args, len(old_policies) + 1)
     rho = np.ones((len(old_policies) + 1,), dtype=np.float64)
-    rho = _normalize_simplex(rho, RHO_MIN)
+    rho = _normalize_simplex(rho, rho_lower_bounds)
     theta_actor = _flatten_actor(actor_new)
     theta_dim = rho.size + theta_actor.size
     func_value = np.zeros((constraint_dim + 1,), dtype=np.float64)
@@ -1235,7 +1372,7 @@ def _run_prcrl_main(args, example_name):
                 actor_new,
                 old_policies,
                 rho,
-                RHO_MIN,
+                rho_lower_bounds,
             )
             actor_loss = (q_hat_torch[:, head] * log_mix).mean()
             actor_loss.backward()
@@ -1253,13 +1390,13 @@ def _run_prcrl_main(args, example_name):
             tau_reward=tau_reward,
             tau_cost=tau_cost,
             simplex_dim=rho.size,
-            rho_min=RHO_MIN,
+            rho_lower_bounds=rho_lower_bounds,
         )
         rho_bar = theta_bar[:rho.size]
         actor_bar = theta_bar[rho.size:]
         rho_next = (1.0 - beta_rho) * rho + beta_rho * rho_bar
         actor_next = (1.0 - beta_actor) * actor_now + beta_actor * actor_bar
-        rho_applied = _normalize_simplex(rho_next, RHO_MIN)
+        rho_applied = _normalize_simplex(rho_next, rho_lower_bounds)
 
         update_index += 1
         drift_update_index_save.append(int(update_index))
@@ -1291,7 +1428,7 @@ def _run_prcrl_main(args, example_name):
 
 
 def Fused_CPRO_main(args, example_name):
-    xi0 = float(getattr(args, "xi0", OFFLINE_BATCH_RATIO))
+    xi0 = float(getattr(args, "xi0", DEFAULT_OFFLINE_WEIGHT))
     xi_decay_updates = int(getattr(args, "xi_decay_updates", 500))
     if xi_decay_updates <= 0:
         raise ValueError("xi_decay_updates must be a positive integer. got xi_decay_updates={0}".format(xi_decay_updates))
@@ -1307,7 +1444,7 @@ def Fused_CPRO_main(args, example_name):
 def Fused_CPRO_CosRho_main(args, example_name):
     run_args = copy.copy(args)
     run_args.rho_scheduler = getattr(run_args, "rho_scheduler", RHO_SCHEDULER_COSINE_RESTART_DECAY)
-    xi0 = float(getattr(run_args, "xi0", OFFLINE_BATCH_RATIO))
+    xi0 = float(getattr(run_args, "xi0", DEFAULT_OFFLINE_WEIGHT))
     return _run_policy_mix_main(
         run_args,
         example_name,
