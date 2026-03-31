@@ -31,6 +31,8 @@ DEFAULT_BETA_ACTOR_POW = DEFAULT_BETA_POW
 DEFAULT_BETA_RHO_POW = 0.9
 # xi0 表示 offline 分支权重；0.5 表示 online/offline 两个分支各占一半。
 DEFAULT_XI0 = 0.5
+DEFAULT_XI_POW = DEFAULT_BETA_RHO_POW
+# xi_pow 表示 xi 的幂次衰减系数，值越大代表离线权重下降越快。
 DEFAULT_ETA_POW = 0.01
 DEFAULT_GAMMA_POW_REWARD = 0.27
 DEFAULT_GAMMA_POW_COST = 0.27
@@ -50,6 +52,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OLD_POLICY_BQ_LIST = [(100, 10)]
 OLD_POLICY_PRETRAIN_EPISODE = 50
 OLD_POLICY_CHECKPOINT_ROOT = DEFAULT_OLD_POLICY_CHECKPOINT_ROOT
+NEW_POLICY_INIT_BQ = None
+NEW_POLICY_INIT_SEED = DEFAULT_SEED
+NEW_POLICY_INIT_PRETRAIN_EPISODE = OLD_POLICY_PRETRAIN_EPISODE
+NEW_POLICY_INIT_CHECKPOINT_ROOT = OLD_POLICY_CHECKPOINT_ROOT
+LOAD_NEW_ACTOR = False
 
 
 # 该入口以 .py 顶部配置为唯一配置源，CLI 仅保留帮助与兼容提示。
@@ -66,6 +73,7 @@ def build_python_config():
         "beta_actor_pow": float(DEFAULT_BETA_ACTOR_POW),
         "beta_rho_pow": float(DEFAULT_BETA_RHO_POW),
         "xi0": float(DEFAULT_XI0),
+        "xi_pow": float(DEFAULT_XI_POW),
         "eta_pow": float(DEFAULT_ETA_POW),
         "gamma_pow_reward": float(DEFAULT_GAMMA_POW_REWARD),
         "gamma_pow_cost": float(DEFAULT_GAMMA_POW_COST),
@@ -78,6 +86,11 @@ def build_python_config():
         "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
         "old_policy_pretrain_episode": int(OLD_POLICY_PRETRAIN_EPISODE),
         "old_policy_checkpoint_root": str(OLD_POLICY_CHECKPOINT_ROOT),
+        "load_new_actor": bool(LOAD_NEW_ACTOR),
+        "new_policy_init": NEW_POLICY_INIT_BQ,
+        "new_policy_seed": int(NEW_POLICY_INIT_SEED),
+        "new_policy_pretrain_episode": int(NEW_POLICY_INIT_PRETRAIN_EPISODE),
+        "new_policy_checkpoint_root": str(NEW_POLICY_INIT_CHECKPOINT_ROOT),
     }
 
 
@@ -171,6 +184,26 @@ def _normalize_old_policy_bq_list(bq_list):
     return _dedupe_run_tags(run_tags)
 
 
+def _normalize_new_policy_init_spec(init_spec):
+    if init_spec is None:
+        return ""
+    if isinstance(init_spec, str):
+        run_tags = _parse_old_policy_cli(init_spec)
+    elif isinstance(init_spec, (list, tuple)) and len(init_spec) == 2 and (not isinstance(init_spec[0], (list, tuple))):
+        run_tags = _normalize_old_policy_bq_list([init_spec])
+    else:
+        raise ValueError(
+            "NEW_POLICY_INIT_BQ must be None, a (b, q) pair, or a string like 'b100:q10'. got {0!r}".format(
+                init_spec
+            )
+        )
+    if len(run_tags) > 1:
+        raise ValueError(
+            "new policy init expects a single (b, q) pair. got {0}".format(", ".join(run_tags))
+        )
+    return "" if not run_tags else str(run_tags[0])
+
+
 def _resolve_old_policy_args(args):
     args.old_policy_seed = int(getattr(args, "old_policy_seed", DEFAULT_OLD_POLICY_SEED))
     if getattr(args, "old_policies", None) is None:
@@ -201,6 +234,40 @@ def _resolve_old_policy_args(args):
     return args
 
 
+def _resolve_new_policy_init_args(args):
+    args.load_new_actor = bool(getattr(args, "load_new_actor", LOAD_NEW_ACTOR))
+    args.new_policy_seed = int(getattr(args, "new_policy_seed", DEFAULT_SEED))
+
+    if getattr(args, "new_policy_pretrain_episode", None) is None:
+        pretrain_episode = int(NEW_POLICY_INIT_PRETRAIN_EPISODE)
+    else:
+        pretrain_episode = int(args.new_policy_pretrain_episode)
+
+    checkpoint_root = getattr(args, "new_policy_checkpoint_root", None) or NEW_POLICY_INIT_CHECKPOINT_ROOT
+
+    args.new_policy_pretrain_episode = pretrain_episode
+    args.new_policy_checkpoint_root = checkpoint_root
+
+    if not args.load_new_actor:
+        args.new_policy_run_tag = ""
+        return args
+
+    init_spec = getattr(args, "new_policy_init", NEW_POLICY_INIT_BQ)
+    run_tag = _normalize_new_policy_init_spec(init_spec)
+    args.new_policy_run_tag = run_tag
+
+    if not run_tag:
+        raise ValueError("new actor init is enabled but new_policy_init is empty.")
+
+    if pretrain_episode <= 0:
+        raise ValueError(
+            "new policy pretrain_episode must be a positive integer when new actor init is configured. got {0}".format(
+                pretrain_episode
+            )
+        )
+    return args
+
+
 def _validate_old_policy_checkpoints(args):
     run_tags = [tag.strip() for tag in str(getattr(args, "old_policy_run_tags", "")).split(",") if tag.strip()]
     if not run_tags:
@@ -221,6 +288,29 @@ def _validate_old_policy_checkpoints(args):
     return args
 
 
+def _validate_new_policy_checkpoint(args):
+    if not bool(getattr(args, "load_new_actor", LOAD_NEW_ACTOR)):
+        return args
+
+    run_tag = str(getattr(args, "new_policy_run_tag", "")).strip()
+    if not run_tag:
+        return args
+
+    checkpoint_path = _resolve_sldac_checkpoint_path(
+        args,
+        EXAMPLE_NAME,
+        run_tag,
+        int(args.new_policy_pretrain_episode),
+        int(args.new_policy_seed),
+        checkpoint_root=args.new_policy_checkpoint_root,
+    )
+    print("selected new policy init run_tag:", run_tag)
+    print("selected new policy init seed:", int(args.new_policy_seed))
+    print("selected new policy init pretrain_episode:", int(args.new_policy_pretrain_episode))
+    print("verified new policy init checkpoint:", run_tag, "->", checkpoint_path)
+    return args
+
+
 def _finalize_actor_rho_xi_args(args):
     if getattr(args, "beta_actor_pow", None) is None:
         args.beta_actor_pow = float(getattr(args, "beta_pow", DEFAULT_BETA_POW))
@@ -236,16 +326,14 @@ def _finalize_actor_rho_xi_args(args):
         args.xi0 = float(DEFAULT_XI0)
     else:
         args.xi0 = float(args.xi0)
-
-    if float(args.beta_rho_pow) <= float(args.beta_actor_pow):
-        raise ValueError(
-            "beta_rho_pow must be greater than beta_actor_pow. got beta_actor_pow={0}, beta_rho_pow={1}".format(
-                args.beta_actor_pow,
-                args.beta_rho_pow,
-            )
-        )
+    if getattr(args, "xi_pow", None) is None:
+        args.xi_pow = float(DEFAULT_XI_POW)
+    else:
+        args.xi_pow = float(args.xi_pow)
     if (float(args.xi0) < 0.0) or (float(args.xi0) > 1.0):
         raise ValueError("xi0 must be in [0, 1] as offline weight. got xi0={0}".format(args.xi0))
+    if float(args.xi_pow) <= 0.0:
+        raise ValueError("xi_pow must be positive. got xi_pow={0}".format(args.xi_pow))
     return args
 
 
@@ -358,6 +446,7 @@ def build_parser():
     parser.add_argument("--beta_actor_pow", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--beta_rho_pow", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--xi0", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--xi_pow", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--eta_pow", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--gamma_pow_reward", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--gamma_pow_cost", type=float, default=argparse.SUPPRESS)
@@ -370,6 +459,10 @@ def build_parser():
     parser.add_argument("--old-policy-seed", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-checkpoint-root", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--new-policy-init", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--new-policy-seed", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--new-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--new-policy-checkpoint-root", type=str, default=argparse.SUPPRESS)
     return parser
 
 
@@ -438,6 +531,7 @@ def main():
         print(ignored_message)
     args = _finalize_actor_rho_xi_args(args)
     args = _resolve_old_policy_args(args)
+    args = _resolve_new_policy_init_args(args)
     args = _finalize_rho_lower_bounds(args)
     _migrate_legacy_checkpoints(
         args.old_policy_checkpoint_root,
@@ -445,6 +539,7 @@ def main():
         default_seed=int(args.old_policy_seed),
     )
     args = _validate_old_policy_checkpoints(args)
+    args = _validate_new_policy_checkpoint(args)
     experiment_seeds = resolve_experiment_seeds(args, DEFAULT_SEED)
     print("experiment seeds:", ", ".join(str(seed_value) for seed_value in experiment_seeds))
     for seed_value in experiment_seeds:

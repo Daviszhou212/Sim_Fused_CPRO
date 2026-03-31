@@ -1,17 +1,26 @@
+import argparse
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import torch
 
 from critic_opt import Critic
 from Fused_CPRO import (
+    DK_main,
     _blend_online_offline_loss,
+    _build_offline_datasets,
+    _build_old_policy_entry,
     _build_rho_lower_bounds,
+    _build_rho_scheduler_config,
     _estimate_mixed_func_value_tilda,
+    _get_rho_beta,
     _normalize_old_policy_sampling_probs,
     _normalize_simplex,
     _select_policy_gradient_batch,
 )
+from run_clqr_fused_cpro import _finalize_actor_rho_xi_args
+from run_clqr_fused_cpro_rho_new import build_python_config as build_rho_new_python_config
 
 
 class _FakeCriticNet:
@@ -31,7 +40,77 @@ def _build_offline_dataset(state_shape=(4, 2), action_shape=(4, 1), cost_dim=2, 
     }
 
 
+class _FakePolicy:
+    pass
+
+
+class _FakeEvalPolicy:
+    def sample_action(self, state):
+        return np.zeros((1,), dtype=np.float64)
+
+
+class _FakeEvalEnv:
+    def __init__(self, rewards, cost_value):
+        self.rewards = [float(value) for value in rewards]
+        self.cost_value = float(cost_value)
+        self.index = 0
+
+    def reset(self):
+        return np.zeros((2,), dtype=np.float64)
+
+    def step(self, action):
+        reward = self.rewards[self.index]
+        self.index += 1
+        return np.zeros((2,), dtype=np.float64), reward, False, {"cost": self.cost_value}
+
+
 class FusedCproRhoBoundsTest(unittest.TestCase):
+    def test_power_rho_scheduler_allows_equal_beta_powers(self):
+        scheduler_config = _build_rho_scheduler_config(
+            argparse.Namespace(rho_scheduler="power", beta_rho_pow=0.7),
+            beta_actor_pow=0.7,
+        )
+        self.assertEqual(scheduler_config["mode"], "power")
+        self.assertAlmostEqual(float(scheduler_config["beta_rho_pow"]), 0.7)
+        self.assertAlmostEqual(float(scheduler_config["xi_pow"]), 0.7)
+
+    def test_power_rho_scheduler_allows_smaller_rho_beta_pow(self):
+        scheduler_config = _build_rho_scheduler_config(
+            argparse.Namespace(rho_scheduler="power", beta_rho_pow=0.6),
+            beta_actor_pow=0.7,
+        )
+        self.assertEqual(scheduler_config["mode"], "power")
+        self.assertAlmostEqual(float(scheduler_config["beta_rho_pow"]), 0.6)
+        self.assertAlmostEqual(float(scheduler_config["xi_pow"]), 0.6)
+
+    def test_episode_peak_exp_decay_scheduler_hits_requested_nodes(self):
+        scheduler_config = _build_rho_scheduler_config(
+            argparse.Namespace(
+                rho_scheduler="episode_peak_exp_decay",
+                rho_beta_peak_episode=15,
+                rho_beta_peak_value=0.5,
+                rho_beta_end_value=0.005,
+                episode=101,
+                update_time_per_episode=10,
+                xi_pow=0.8,
+            ),
+            beta_actor_pow=0.7,
+        )
+        self.assertEqual(scheduler_config["mode"], "episode_peak_exp_decay")
+        self.assertAlmostEqual(float(_get_rho_beta(0, scheduler_config)), 0.0, places=12)
+        self.assertAlmostEqual(float(_get_rho_beta(150, scheduler_config)), 0.5, places=12)
+        self.assertAlmostEqual(float(_get_rho_beta(159, scheduler_config)), 0.5, places=12)
+        self.assertLess(float(_get_rho_beta(160, scheduler_config)), 0.5)
+        self.assertAlmostEqual(float(_get_rho_beta(1000, scheduler_config)), 0.005, places=12)
+        self.assertAlmostEqual(float(scheduler_config["xi_pow"]), 0.8)
+
+    def test_run_args_finalize_allows_beta_rho_not_greater_than_actor(self):
+        args = _finalize_actor_rho_xi_args(
+            argparse.Namespace(beta_actor_pow=0.7, beta_rho_pow=0.6, xi0=0.5)
+        )
+        self.assertAlmostEqual(float(args.beta_actor_pow), 0.7)
+        self.assertAlmostEqual(float(args.beta_rho_pow), 0.6)
+
     def test_new_actor_lower_bound_is_first_dimension(self):
         rho_lower_bounds = _build_rho_lower_bounds(4)
         self.assertAlmostEqual(float(rho_lower_bounds[0]), 0.2)
@@ -55,6 +134,25 @@ class FusedCproRhoBoundsTest(unittest.TestCase):
     def test_old_policy_sampling_probs_fall_back_to_uniform_when_old_mass_is_zero(self):
         probs = _normalize_old_policy_sampling_probs(np.asarray([1.0, 0.0, 0.0], dtype=np.float64), old_policy_count=2)
         np.testing.assert_allclose(probs, np.asarray([0.5, 0.5], dtype=np.float64))
+
+    def test_rho_new_run_uses_episode_peak_exp_decay_defaults(self):
+        config = build_rho_new_python_config()
+        self.assertEqual(config["rho_scheduler"], "episode_peak_exp_decay")
+        self.assertEqual(config["rho_beta_peak_episode"], 15)
+        self.assertAlmostEqual(float(config["rho_beta_peak_value"]), 0.5)
+        self.assertAlmostEqual(float(config["rho_beta_end_value"]), 0.005)
+        self.assertIn("xi_pow", config)
+        self.assertNotIn("rho_beta_peak_init", config)
+        self.assertNotIn("rho_beta_peak_final_ratio", config)
+        self.assertNotIn("rho_beta_min", config)
+        self.assertNotIn("rho_restart_rounds", config)
+        self.assertNotIn("rho_period_mult", config)
+
+    def test_base_run_finalize_accepts_explicit_xi_pow(self):
+        args = _finalize_actor_rho_xi_args(
+            argparse.Namespace(beta_actor_pow=0.7, beta_rho_pow=0.6, xi0=0.5, xi_pow=0.9)
+        )
+        self.assertAlmostEqual(float(args.xi_pow), 0.9)
 
     def test_policy_gradient_batch_keeps_equal_online_and_offline_size_when_xi_is_zero(self):
         online_state_batch = np.arange(12, dtype=np.float64).reshape(6, 2)
@@ -222,6 +320,47 @@ class FusedCproRhoBoundsTest(unittest.TestCase):
             dataset_probs=np.asarray([0.0, 1.0], dtype=np.float64),
         )
         np.testing.assert_allclose(mixed, np.asarray([30.0, 40.0], dtype=np.float64))
+
+    def test_offline_datasets_use_old_policy_seed_for_rollout(self):
+        first_policy = _FakePolicy()
+        second_policy = _FakePolicy()
+        old_policy_entries = [
+            _build_old_policy_entry(first_policy, "dk_policy", 11),
+            _build_old_policy_entry(second_policy, "b100_q10", 29),
+        ]
+        recorded_calls = []
+
+        def _fake_rollout(example_name, policy, steps, seed, device):
+            recorded_calls.append((example_name, policy, int(steps), int(seed), device))
+            return _build_offline_dataset()
+
+        with patch("Fused_CPRO._policy_rollout_dataset", side_effect=_fake_rollout):
+            datasets = _build_offline_datasets("CLQR", old_policy_entries, offline_steps=7, device="cpu")
+
+        self.assertEqual(len(datasets), 2)
+        self.assertEqual([item[3] for item in recorded_calls], [11, 29])
+        self.assertIs(recorded_calls[0][1], first_policy)
+        self.assertIs(recorded_calls[1][1], second_policy)
+
+    def test_dk_main_matches_burn_in_and_block_logging_schedule(self):
+        rewards = np.arange(1, 17, dtype=np.float64)
+        fake_env = _FakeEvalEnv(rewards, cost_value=8.0)
+        args = argparse.Namespace(
+            seed=5,
+            device="cpu",
+            T=2,
+            num_new_data=3,
+            update_time_per_episode=2,
+            episode=2,
+            MAX_STEPS=16,
+        )
+
+        with patch("Fused_CPRO._build_scene", return_value=(fake_env, None, 2, 1, 1, None)):
+            with patch("Fused_CPRO._build_dk_policy", return_value=_FakeEvalPolicy()):
+                reward_save, cost_save = DK_main(args, "CLQR")
+
+        np.testing.assert_allclose(reward_save, np.asarray([7.5, 13.5], dtype=np.float64))
+        np.testing.assert_allclose(cost_save, np.asarray([8.0, 8.0], dtype=np.float64))
 
 
 if __name__ == "__main__":

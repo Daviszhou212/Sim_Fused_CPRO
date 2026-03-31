@@ -10,19 +10,38 @@ from seed_utils import apply_python_config_priority, format_ignored_cli_override
 from SLDAC import SLDAC_main
 
 
-# Keep only the four SLDAC settings needed for current reproduction.
+# Fixed SLDAC runs kept for the current MIMO reproduction.
 # Tuple fields: output suffix, log label, T, grad_T, num_new_data, Q_update_time.
 SLDAC_RUNS = [
     ("b100_q1", "SLDAC, batchsize=100, q=1", 500, 500, 100, 1),
-    ("b100_q5", "SLDAC, batchsize=100, q=5", 500, 500, 100, 5),
-    ("b100_q10", "SLDAC, batchsize=100, q=10", 500, 500, 100, 10),
-    ("b500_q10", "SLDAC, T=500, batchsize=500, q=10", 50, 100, 100, 10),
+    # ("b100_q5", "SLDAC, batchsize=100, q=5", 500, 500, 100, 5),
+    # ("b100_q10", "SLDAC, batchsize=100, q=10", 500, 500, 100, 10),
+    # ("b500_q10", "SLDAC, T=500, batchsize=500, q=10", 50, 100, 100, 10),
 ]
 
-DEFAULT_SEED = 1
-DEFAULT_SEEDS = (5,6,7,8,9)
+EXAMPLE_NAME = "MIMO"
 ALGORITHM_NAME = "SLDAC"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Top-level defaults shared by all active SLDAC runs in this entry script.
+DEFAULT_SEED = 0
+DEFAULT_SEEDS = (0,)
+DEFAULT_WINDOW = 10000
+DEFAULT_EPISODE = 100
+DEFAULT_UPDATE_TIME_PER_EPISODE = 10
+DEFAULT_NUM_UPDATE_TIME = DEFAULT_EPISODE * DEFAULT_UPDATE_TIME_PER_EPISODE
+DEFAULT_ALPHA_POW = 0.6
+DEFAULT_BETA_POW = 0.7
+DEFAULT_ETA_POW = 0.01
+DEFAULT_GAMMA_POW_REWARD = 0.3
+DEFAULT_GAMMA_POW_COST = 0.3
+DEFAULT_TAU_REWARD = 1.0
+DEFAULT_TAU_COST = 1.0
+DEFAULT_DEVICE = "cpu"
+DEFAULT_CHECKPOINT_ROOT = "checkpoints/SLDAC"
+DEFAULT_CHECKPOINT_INTERVAL_EPISODES = 10
+DEFAULT_SAVE_FINAL_CHECKPOINT = True
+
 LEGACY_CHECKPOINT_PREFIX = "episode_"
 LEGACY_CHECKPOINT_SUFFIX = ".pt"
 
@@ -36,9 +55,7 @@ def _format_seed_list_text(seed_values):
 
 
 def _resolve_checkpoint_root(checkpoint_root):
-    root = checkpoint_root
-    if not root:
-        root = os.path.join("checkpoints", "SLDAC")
+    root = checkpoint_root or DEFAULT_CHECKPOINT_ROOT
     root = str(root)
     if not os.path.isabs(root):
         root = os.path.join(os.getcwd(), root)
@@ -95,17 +112,35 @@ def _save_mat_with_seed(filename, payload, args, algorithm, run_tag):
     savemat("{0}_seed{1}{2}".format(root, seed_value, ext), full_payload)
 
 
-def _run_single_seed(args, example_name):
-    for output_suffix, message, t_horizon, grad_t, num_new_data_run, q_update_time in SLDAC_RUNS:
-        print(message)
-        args.run_tag = output_suffix
-        args.T = t_horizon
-        args.grad_T = grad_t
-        args.num_new_data = num_new_data_run
-        args.Q_update_time = q_update_time
-        args.MAX_STEPS = 2 * args.T + args.num_update_time * args.num_new_data
+def _refresh_max_steps(args):
+    args.MAX_STEPS = 2 * int(args.T) + int(args.num_update_time) * int(args.num_new_data)
+    return args
 
-        reward_save, cost_save = SLDAC_main(args, example_name)
+
+def _apply_run_config(args, output_suffix, message, t_horizon, grad_t, num_new_data_run, q_update_time):
+    print(message)
+    args.run_tag = output_suffix
+    args.T = int(t_horizon)
+    args.grad_T = int(grad_t)
+    args.num_new_data = int(num_new_data_run)
+    args.Q_update_time = int(q_update_time)
+    return _refresh_max_steps(args)
+
+
+def _run_single_seed(args):
+    for output_suffix, message, t_horizon, grad_t, num_new_data_run, q_update_time in SLDAC_RUNS:
+        run_args = argparse.Namespace(**vars(args))
+        run_args = _apply_run_config(
+            run_args,
+            output_suffix,
+            message,
+            t_horizon,
+            grad_t,
+            num_new_data_run,
+            q_update_time,
+        )
+
+        reward_save, cost_save = SLDAC_main(run_args, EXAMPLE_NAME)
         _save_mat_with_seed(
             build_algorithm_artifact_path(
                 BASE_DIR,
@@ -113,8 +148,8 @@ def _run_single_seed(args, example_name):
                 "SLDAC_reward_{0}.mat".format(output_suffix),
             ),
             {"array": reward_save},
-            args,
-            "SLDAC",
+            run_args,
+            ALGORITHM_NAME,
             output_suffix,
         )
         _save_mat_with_seed(
@@ -124,73 +159,41 @@ def _run_single_seed(args, example_name):
                 "SLDAC_cost_{0}.mat".format(output_suffix),
             ),
             {"array": cost_save},
-            args,
-            "SLDAC",
+            run_args,
+            ALGORITHM_NAME,
             output_suffix,
         )
 
 
-def main(args, example_name):
+def main(args):
     experiment_seeds = resolve_experiment_seeds(args, DEFAULT_SEED)
     print("experiment seeds:", ", ".join(str(seed_value) for seed_value in experiment_seeds))
     for seed_value in experiment_seeds:
         print("run seed:", int(seed_value))
         seed_args = argparse.Namespace(**vars(args))
         seed_args.seed = int(seed_value)
-        _run_single_seed(seed_args, example_name)
+        _run_single_seed(seed_args)
 
 
-example_name = "MIMO"
-alpha_pow = 0.6
-beta_pow = 0.7
-eta_pow = 0.01
-gamma_pow = 0.3
-gamma_pow_reward = gamma_pow
-gamma_pow_cost = gamma_pow
-tau_reward = 1
-tau_cost = 1
-
-seed = DEFAULT_SEED
-T = 500
-num_new_data = 100
-window = 10000
-grad_T = T
-episode = 60
-update_time_per_episode = 10
-num_update_time = episode * update_time_per_episode
-Q_update_time = 1
-MAX_STEPS = 2 * T + num_update_time * num_new_data
-device = "cpu"
-checkpoint_root = "checkpoints/SLDAC"
-checkpoint_interval_episodes = 10
-save_final_checkpoint = True
-
-
-# 该入口以 .py 顶部配置为唯一配置源，CLI 仅保留帮助与兼容提示。
 def build_python_config():
     return {
-        "seed": int(seed),
+        "seed": int(DEFAULT_SEED),
         "seeds": _format_seed_list_text(DEFAULT_SEEDS),
-        "T": int(T),
-        "grad_T": int(grad_T),
-        "window": int(window),
-        "num_new_data": int(num_new_data),
-        "episode": int(episode),
-        "update_time_per_episode": int(update_time_per_episode),
-        "num_update_time": int(num_update_time),
-        "Q_update_time": int(Q_update_time),
-        "MAX_STEPS": int(MAX_STEPS),
-        "alpha_pow": float(alpha_pow),
-        "beta_pow": float(beta_pow),
-        "eta_pow": float(eta_pow),
-        "gamma_pow_reward": float(gamma_pow_reward),
-        "gamma_pow_cost": float(gamma_pow_cost),
-        "tau_reward": float(tau_reward),
-        "tau_cost": float(tau_cost),
-        "device": str(device),
-        "checkpoint_root": str(checkpoint_root),
-        "checkpoint_interval_episodes": int(checkpoint_interval_episodes),
-        "save_final_checkpoint": int(save_final_checkpoint),
+        "window": int(DEFAULT_WINDOW),
+        "episode": int(DEFAULT_EPISODE),
+        "update_time_per_episode": int(DEFAULT_UPDATE_TIME_PER_EPISODE),
+        "num_update_time": int(DEFAULT_NUM_UPDATE_TIME),
+        "alpha_pow": float(DEFAULT_ALPHA_POW),
+        "beta_pow": float(DEFAULT_BETA_POW),
+        "eta_pow": float(DEFAULT_ETA_POW),
+        "gamma_pow_reward": float(DEFAULT_GAMMA_POW_REWARD),
+        "gamma_pow_cost": float(DEFAULT_GAMMA_POW_COST),
+        "tau_reward": float(DEFAULT_TAU_REWARD),
+        "tau_cost": float(DEFAULT_TAU_COST),
+        "device": str(DEFAULT_DEVICE),
+        "checkpoint_root": str(DEFAULT_CHECKPOINT_ROOT),
+        "checkpoint_interval_episodes": int(DEFAULT_CHECKPOINT_INTERVAL_EPISODES),
+        "save_final_checkpoint": int(DEFAULT_SAVE_FINAL_CHECKPOINT),
     }
 
 
@@ -201,15 +204,10 @@ def build_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--seeds", type=str, default=argparse.SUPPRESS)
-    parser.add_argument("--T", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--grad_T", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--window", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--num_new_data", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--episode", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--update_time_per_episode", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--num_update_time", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--Q_update_time", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--MAX_STEPS", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--alpha_pow", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--beta_pow", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--eta_pow", type=float, default=argparse.SUPPRESS)
@@ -235,5 +233,5 @@ if __name__ == "__main__":
     ignored_message = format_ignored_cli_overrides(ignored_options)
     if ignored_message:
         print(ignored_message)
-    _migrate_legacy_checkpoints(args.checkpoint_root, example_name, default_seed=DEFAULT_SEED)
-    main(args, example_name)
+    _migrate_legacy_checkpoints(args.checkpoint_root, EXAMPLE_NAME, default_seed=DEFAULT_SEED)
+    main(args)

@@ -44,6 +44,10 @@ CHECKPOINT_FILE_TEMPLATE = "episode_{0:04d}.pt"
 CHECKPOINT_FINAL_FILE_TEMPLATE = "episode_{0:04d}_final.pt"
 RHO_SCHEDULER_POWER = "power"
 RHO_SCHEDULER_COSINE_RESTART_DECAY = "cosine_restart_decay"
+RHO_SCHEDULER_EPISODE_PEAK_EXP_DECAY = "episode_peak_exp_decay"
+RHO_BETA_PEAK_EPISODE = 15
+RHO_BETA_PEAK_VALUE = 0.5
+RHO_BETA_END_VALUE = 0.005
 
 
 def _format_seed_dir(seed):
@@ -207,6 +211,22 @@ class FrozenActorPolicy:
             return dist.log_prob(actions_torch).sum(dim=1)
 
 
+def _build_old_policy_entry(policy, label, policy_seed):
+    return {
+        "policy": policy,
+        "label": str(label),
+        "policy_seed": int(policy_seed),
+    }
+
+
+def _extract_old_policies(old_policy_entries):
+    return [entry["policy"] for entry in list(old_policy_entries)]
+
+
+def _build_old_policy_labels(old_policy_entries):
+    return ["new_actor"] + [str(entry["label"]) for entry in list(old_policy_entries)]
+
+
 class HeuristicGaussianPolicy:
     def __init__(self, mean_fn, action_dim, device, log_std=DK_LOG_STD):
         self.mean_fn = mean_fn
@@ -293,6 +313,22 @@ def _policy_rollout_dataset(example_name, policy, steps, seed, device):
         if done:
             observation = env.reset()
     return {"state": states, "action": actions, "costs": costs}
+
+
+def _build_offline_datasets(example_name, old_policy_entries, offline_steps, device):
+    datasets = []
+    for entry in list(old_policy_entries):
+        # 离线数据必须使用旧策略自身的种子采样，不能混入当前实验种子。
+        datasets.append(
+            _policy_rollout_dataset(
+                example_name,
+                entry["policy"],
+                offline_steps,
+                int(entry["policy_seed"]),
+                device,
+            )
+        )
+    return datasets
 
 
 def _coerce_dataset_sampling_probs(dataset_count, dataset_probs):
@@ -508,11 +544,56 @@ def _build_policy_gradient_batch_impl(
     return fused_state_batch, fused_action_batch
 
 
+def _smoothstep01(value):
+    clipped = float(np.clip(float(value), 0.0, 1.0))
+    return clipped * clipped * (3.0 - 2.0 * clipped)
+
+
+def _resolve_episode_from_update(update_index, update_time_per_episode, episode_count):
+    updates_per_episode = int(update_time_per_episode)
+    total_episodes = int(episode_count)
+    if updates_per_episode <= 0:
+        raise ValueError(
+            "update_time_per_episode must be a positive integer for episode-based rho scheduling. got {0}".format(
+                updates_per_episode
+            )
+        )
+    if total_episodes <= 0:
+        raise ValueError(
+            "episode must be a positive integer for episode-based rho scheduling. got {0}".format(total_episodes)
+        )
+    episode_index = int(update_index) // updates_per_episode
+    return int(np.clip(episode_index, 0, total_episodes - 1))
+
+
+def _get_episode_peak_exp_decay_beta(episode_index, peak_episode, peak_value, episode_count, end_value):
+    peak_episode = int(peak_episode)
+    total_episodes = int(episode_count)
+    current_episode = int(np.clip(int(episode_index), 0, max(total_episodes - 1, 0)))
+    peak_value = float(peak_value)
+    end_value = float(end_value)
+
+    # 上升段使用 smoothstep，保证起点与峰值点都更平滑。
+    if current_episode <= peak_episode:
+        rise_phase = float(current_episode) / float(max(peak_episode, 1))
+        return peak_value * _smoothstep01(rise_phase)
+
+    last_episode = total_episodes - 1
+    decay_span = max(last_episode - peak_episode, 1)
+    decay_steps = current_episode - peak_episode
+    decay_rate = np.log(peak_value / end_value) / float(decay_span)
+    return peak_value * np.exp(-decay_rate * float(decay_steps))
+
+
 def _get_rho_scheduler_mode(args):
     mode = str(getattr(args, "rho_scheduler", RHO_SCHEDULER_POWER)).strip().lower()
     if not mode:
         return RHO_SCHEDULER_POWER
-    if mode not in (RHO_SCHEDULER_POWER, RHO_SCHEDULER_COSINE_RESTART_DECAY):
+    if mode not in (
+        RHO_SCHEDULER_POWER,
+        RHO_SCHEDULER_COSINE_RESTART_DECAY,
+        RHO_SCHEDULER_EPISODE_PEAK_EXP_DECAY,
+    ):
         raise ValueError("unsupported rho_scheduler: {0}".format(mode))
     return mode
 
@@ -521,17 +602,58 @@ def _build_rho_scheduler_config(args, beta_actor_pow):
     mode = _get_rho_scheduler_mode(args)
     if mode == RHO_SCHEDULER_POWER:
         beta_rho_pow = float(getattr(args, "beta_rho_pow", beta_actor_pow))
-        if beta_rho_pow <= beta_actor_pow:
-            raise ValueError(
-                "beta_rho_pow must be greater than beta_actor_pow. got beta_actor_pow={0}, beta_rho_pow={1}".format(
-                    beta_actor_pow,
-                    beta_rho_pow,
-                )
-            )
         return {
             "mode": mode,
             "beta_rho_pow": beta_rho_pow,
-            "xi_decay_pow": beta_rho_pow,
+            "xi_pow": beta_rho_pow,
+        }
+    if mode == RHO_SCHEDULER_EPISODE_PEAK_EXP_DECAY:
+        peak_episode = int(getattr(args, "rho_beta_peak_episode", RHO_BETA_PEAK_EPISODE))
+        peak_value = float(getattr(args, "rho_beta_peak_value", RHO_BETA_PEAK_VALUE))
+        end_value = float(getattr(args, "rho_beta_end_value", RHO_BETA_END_VALUE))
+        total_episodes = int(getattr(args, "episode"))
+        update_time_per_episode = int(getattr(args, "update_time_per_episode"))
+        xi_pow = float(getattr(args, "xi_pow", beta_actor_pow))
+
+        if peak_episode <= 0:
+            raise ValueError(
+                "rho_beta_peak_episode must be a positive integer. got rho_beta_peak_episode={0}".format(
+                    peak_episode
+                )
+            )
+        if (peak_value <= 0.0) or (peak_value > 1.0):
+            raise ValueError("rho_beta_peak_value must be in (0, 1]. got {0}".format(peak_value))
+        if end_value <= 0.0:
+            raise ValueError("rho_beta_end_value must be positive. got {0}".format(end_value))
+        if end_value >= peak_value:
+            raise ValueError(
+                "rho_beta_end_value must be smaller than rho_beta_peak_value. got rho_beta_end_value={0}, rho_beta_peak_value={1}".format(
+                    end_value,
+                    peak_value,
+                )
+            )
+        if total_episodes <= peak_episode:
+            raise ValueError(
+                "episode must be greater than rho_beta_peak_episode. got episode={0}, rho_beta_peak_episode={1}".format(
+                    total_episodes,
+                    peak_episode,
+                )
+            )
+        if update_time_per_episode <= 0:
+            raise ValueError(
+                "update_time_per_episode must be a positive integer. got update_time_per_episode={0}".format(
+                    update_time_per_episode
+                )
+            )
+
+        return {
+            "mode": mode,
+            "peak_episode": peak_episode,
+            "peak_value": peak_value,
+            "end_value": end_value,
+            "episode_count": total_episodes,
+            "update_time_per_episode": update_time_per_episode,
+            "xi_pow": xi_pow,
         }
 
     beta_peak_init = float(getattr(args, "rho_beta_peak_init"))
@@ -540,7 +662,7 @@ def _build_rho_scheduler_config(args, beta_actor_pow):
     restart_rounds = int(getattr(args, "rho_restart_rounds"))
     period_mult = int(getattr(args, "rho_period_mult"))
     total_updates = int(getattr(args, "num_update_time"))
-    xi_decay_pow = float(getattr(args, "xi_decay_pow", beta_actor_pow))
+    xi_pow = float(getattr(args, "xi_pow", beta_actor_pow))
 
     if beta_min <= 0.0:
         raise ValueError("rho_beta_min must be positive. got rho_beta_min={0}".format(beta_min))
@@ -583,13 +705,26 @@ def _build_rho_scheduler_config(args, beta_actor_pow):
         "beta_min": beta_min,
         "periods": periods,
         "period_mult": period_mult,
-        "xi_decay_pow": xi_decay_pow,
+        "xi_pow": xi_pow,
     }
 
 
 def _get_rho_beta(update_index, scheduler_config):
     if scheduler_config["mode"] == RHO_SCHEDULER_POWER:
         return 1.0 / ((int(update_index) + 1) ** float(scheduler_config["beta_rho_pow"]))
+    if scheduler_config["mode"] == RHO_SCHEDULER_EPISODE_PEAK_EXP_DECAY:
+        episode_index = _resolve_episode_from_update(
+            update_index,
+            scheduler_config["update_time_per_episode"],
+            scheduler_config["episode_count"],
+        )
+        return _get_episode_peak_exp_decay_beta(
+            episode_index,
+            scheduler_config["peak_episode"],
+            scheduler_config["peak_value"],
+            scheduler_config["episode_count"],
+            scheduler_config["end_value"],
+        )
 
     periods = np.asarray(scheduler_config["periods"], dtype=np.int32).reshape(-1)
     restart_index = 0
@@ -785,8 +920,10 @@ def _normalize_run_tags(run_tags):
     raise TypeError("old_policy_run_tags must be a comma-separated string or a sequence of strings.")
 
 
-def _get_checkpoint_root(args):
-    root = getattr(args, "old_policy_checkpoint_root", None)
+def _get_checkpoint_root(args, checkpoint_root=None):
+    root = checkpoint_root
+    if not root:
+        root = getattr(args, "old_policy_checkpoint_root", None)
     if not root:
         root = getattr(args, "checkpoint_root", os.path.join("checkpoints", "SLDAC"))
     if not root:
@@ -797,9 +934,9 @@ def _get_checkpoint_root(args):
     return root
 
 
-def _resolve_sldac_checkpoint_path(args, example_name, run_tag, pretrain_episode, seed):
+def _resolve_sldac_checkpoint_path(args, example_name, run_tag, pretrain_episode, seed, checkpoint_root=None):
     checkpoint_dir = os.path.join(
-        _get_checkpoint_root(args),
+        _get_checkpoint_root(args, checkpoint_root=checkpoint_root),
         str(example_name),
         str(run_tag),
         _format_seed_dir(seed),
@@ -821,19 +958,26 @@ def _resolve_sldac_checkpoint_path(args, example_name, run_tag, pretrain_episode
     )
 
 
-def _load_old_policy_from_checkpoint(
+def _load_sldac_actor_checkpoint(
     args,
     example_name,
     run_tag,
     pretrain_episode,
     seed,
     device,
-    policy_batch_size,
     state_dim,
     action_dim,
     constraint_dim,
+    checkpoint_root=None,
 ):
-    checkpoint_path = _resolve_sldac_checkpoint_path(args, example_name, run_tag, pretrain_episode, seed)
+    checkpoint_path = _resolve_sldac_checkpoint_path(
+        args,
+        example_name,
+        run_tag,
+        pretrain_episode,
+        seed,
+        checkpoint_root=checkpoint_root,
+    )
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
     algorithm = str(checkpoint.get("algorithm", ""))
@@ -888,22 +1032,79 @@ def _load_old_policy_from_checkpoint(
     if actor_log_std is None:
         raise KeyError("checkpoint model.actor_log_std is missing.")
 
+    actor_log_std_torch = torch.as_tensor(actor_log_std, dtype=torch.float, device=device).detach().clone().view(-1)
+    if int(actor_log_std_torch.numel()) != int(action_dim):
+        raise ValueError(
+            "checkpoint actor_log_std size mismatch: expected {0}, got {1}".format(
+                int(action_dim),
+                int(actor_log_std_torch.numel()),
+            )
+        )
+
+    return checkpoint_path, actor_state_dict, actor_log_std_torch
+
+
+def _load_old_policy_from_checkpoint(
+    args,
+    example_name,
+    run_tag,
+    pretrain_episode,
+    seed,
+    device,
+    policy_batch_size,
+    state_dim,
+    action_dim,
+    constraint_dim,
+):
+    checkpoint_path, actor_state_dict, actor_log_std = _load_sldac_actor_checkpoint(
+        args,
+        example_name,
+        run_tag,
+        pretrain_episode,
+        seed,
+        device,
+        state_dim,
+        action_dim,
+        constraint_dim,
+    )
+
     if _is_mimo(example_name):
         actor = GaussianPolicy_MIMO(int(state_dim), int(action_dim), device, int(policy_batch_size))
     else:
         actor = GaussianPolicy_CLQR(int(state_dim), int(action_dim), device, int(policy_batch_size))
     actor.net.load_state_dict(actor_state_dict)
-    actor.log_std = torch.as_tensor(actor_log_std, dtype=torch.float, device=device).detach().clone().view(-1)
-    if int(actor.log_std.numel()) != int(action_dim):
-        raise ValueError(
-            "checkpoint actor_log_std size mismatch: expected {0}, got {1}".format(
-                int(action_dim),
-                int(actor.log_std.numel()),
-            )
-        )
+    actor.log_std = actor_log_std
 
     print("load old policy checkpoint:", checkpoint_path)
     return FrozenActorPolicy(actor)
+
+
+def _maybe_initialize_new_actor_from_checkpoint(args, example_name, actor, state_dim, action_dim, constraint_dim):
+    load_new_actor = getattr(args, "load_new_actor", None)
+    if (load_new_actor is not None) and (not bool(load_new_actor)):
+        print("initialize new actor from default random initialization.")
+        return actor
+
+    run_tag = str(getattr(args, "new_policy_run_tag", "")).strip()
+    if not run_tag:
+        print("initialize new actor from default random initialization.")
+        return actor
+
+    checkpoint_path, actor_state_dict, _ = _load_sldac_actor_checkpoint(
+        args,
+        example_name,
+        run_tag,
+        int(getattr(args, "new_policy_pretrain_episode")),
+        int(getattr(args, "new_policy_seed")),
+        actor.device,
+        state_dim,
+        action_dim,
+        constraint_dim,
+        checkpoint_root=getattr(args, "new_policy_checkpoint_root", None),
+    )
+    actor.net.load_state_dict(actor_state_dict)
+    print("initialize new actor mu from checkpoint and keep default log_std:", checkpoint_path)
+    return actor
 
 
 def _train_sldac_like_actor(args, example_name, seed):
@@ -999,10 +1200,16 @@ def _train_sldac_like_actor(args, example_name, seed):
 
 def _build_old_policy_library(args, example_name, main_env, device, state_dim, action_dim, constraint_dim):
     seed = int(getattr(args, "seed", 0))
-    old_policies = [_build_dk_policy(example_name, main_env, device, seed)]
+    old_policy_seed = int(getattr(args, "old_policy_seed", seed))
+    old_policy_entries = [
+        _build_old_policy_entry(
+            _build_dk_policy(example_name, main_env, device, old_policy_seed),
+            "dk_policy",
+            old_policy_seed,
+        )
+    ]
     run_tags = _normalize_run_tags(getattr(args, "old_policy_run_tags", None))
     if run_tags:
-        old_policy_seed = int(getattr(args, "old_policy_seed", seed))
         pretrain_episode = int(
             getattr(
                 args,
@@ -1013,36 +1220,37 @@ def _build_old_policy_library(args, example_name, main_env, device, state_dim, a
         if pretrain_episode <= 0:
             raise ValueError("old_policy_pretrain_episode must be a positive integer when old policies are configured.")
         for run_tag in run_tags:
-            old_policies.append(
-                _load_old_policy_from_checkpoint(
-                    args,
-                    example_name,
+            old_policy_entries.append(
+                _build_old_policy_entry(
+                    _load_old_policy_from_checkpoint(
+                        args,
+                        example_name,
+                        run_tag,
+                        pretrain_episode,
+                        old_policy_seed,
+                        device,
+                        int(args.grad_T),
+                        state_dim,
+                        action_dim,
+                        constraint_dim,
+                    ),
                     run_tag,
-                    pretrain_episode,
                     old_policy_seed,
-                    device,
-                    int(args.grad_T),
-                    state_dim,
-                    action_dim,
-                    constraint_dim,
                 )
             )
-        return old_policies
+        return old_policy_entries
 
     for idx in range(NUM_SLDAC_LIBRARY_POLICIES):
-        actor = _train_sldac_like_actor(args, example_name, seed + 101 * (idx + 1))
-        old_policies.append(FrozenActorPolicy(actor))
-    return old_policies
-
-
-def _build_old_policy_labels(args):
-    run_tags = _normalize_run_tags(getattr(args, "old_policy_run_tags", None))
-    if run_tags:
-        return ["new_actor", "dk_policy"] + run_tags
-    labels = ["new_actor", "dk_policy"]
-    for idx in range(NUM_SLDAC_LIBRARY_POLICIES):
-        labels.append("sldac_like_{0}".format(idx + 1))
-    return labels
+        policy_seed = seed + 101 * (idx + 1)
+        actor = _train_sldac_like_actor(args, example_name, policy_seed)
+        old_policy_entries.append(
+            _build_old_policy_entry(
+                FrozenActorPolicy(actor),
+                "sldac_like_{0}".format(idx + 1),
+                policy_seed,
+            )
+        )
+    return old_policy_entries
 
 
 def _format_rho_debug_line(rho_labels, rho, precision=6):
@@ -1115,9 +1323,17 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
     window = int(args.window)
 
     env, actor_new, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(example_name, seed, device, grad_t)
+    actor_new = _maybe_initialize_new_actor_from_checkpoint(
+        args,
+        example_name,
+        actor_new,
+        state_dim,
+        action_dim,
+        constraint_dim,
+    )
     observation = env.reset()
 
-    old_policies = _build_old_policy_library(
+    old_policy_entries = _build_old_policy_library(
         args,
         example_name,
         env,
@@ -1126,14 +1342,12 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
         action_dim,
         constraint_dim,
     )
-    rho_labels = _build_old_policy_labels(args)
+    old_policies = _extract_old_policies(old_policy_entries)
+    rho_labels = _build_old_policy_labels(old_policy_entries)
     offline_datasets = []
     if use_offline_data:
         offline_steps = max(int(OFFLINE_STEPS_MULTIPLIER * t_horizon), grad_t)
-        for idx, policy in enumerate(old_policies):
-            offline_datasets.append(
-                _policy_rollout_dataset(example_name, policy, offline_steps, seed + 1000 + idx, device)
-            )
+        offline_datasets = _build_offline_datasets(example_name, old_policy_entries, offline_steps, device)
 
     buffer = _make_buffer(example_name, t_horizon, window, num_new_data, state_dim, action_dim, constraint_dim)
     critic = Critic(example_name, grad_t, state_dim, action_dim, constraint_dim, q_update_time, device)
@@ -1180,7 +1394,7 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
             beta_rho = _get_rho_beta(update_index, rho_scheduler_config)
             eta = 1.0 / ((update_index + 1) ** eta_pow)
             if use_offline_data:
-                xi = _get_xi(update_index, rho_scheduler_config["xi_decay_pow"], xi0)
+                xi = _get_xi(update_index, rho_scheduler_config["xi_pow"], xi0)
             else:
                 xi = 0.0
             if q_update_index == q_update_time:
@@ -1370,8 +1584,16 @@ def _run_prcrl_main(args, example_name, return_aux):
     window = int(args.window)
 
     env, actor_new, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(example_name, seed, device, grad_t)
+    actor_new = _maybe_initialize_new_actor_from_checkpoint(
+        args,
+        example_name,
+        actor_new,
+        state_dim,
+        action_dim,
+        constraint_dim,
+    )
     observation = env.reset()
-    old_policies = _build_old_policy_library(
+    old_policy_entries = _build_old_policy_library(
         args,
         example_name,
         env,
@@ -1380,7 +1602,8 @@ def _run_prcrl_main(args, example_name, return_aux):
         action_dim,
         constraint_dim,
     )
-    rho_labels = _build_old_policy_labels(args)
+    old_policies = _extract_old_policies(old_policy_entries)
+    rho_labels = _build_old_policy_labels(old_policy_entries)
     buffer = _make_buffer(example_name, t_horizon, window, num_new_data, state_dim, action_dim, constraint_dim)
 
     rho_lower_bounds = _resolve_rho_lower_bounds(args, len(old_policies) + 1)
@@ -1511,8 +1734,67 @@ def Fused_CPRO_CosRho_main(args, example_name, return_aux=False):
     return _run_policy_mix_main(run_args, example_name, "Fused_CPRO_CosRho", True, return_aux)
 
 
+def Fused_CPRO_RhoNew_main(args, example_name, return_aux=False):
+    run_args = copy.copy(args)
+    run_args.rho_scheduler = getattr(run_args, "rho_scheduler", RHO_SCHEDULER_EPISODE_PEAK_EXP_DECAY)
+    return _run_policy_mix_main(run_args, example_name, "Fused_CPRO_RhoNew", True, return_aux)
+
+
 def HRL_main(args, example_name, return_aux=False):
     return _run_policy_mix_main(args, example_name, "HRL", False, return_aux)
+
+
+def _run_dk_main(args, example_name):
+    seed = int(getattr(args, "seed", 0))
+    device = str(getattr(args, "device", "cpu"))
+    t_horizon = int(args.T)
+    num_new_data = int(args.num_new_data)
+    update_time_per_episode = int(args.update_time_per_episode)
+    episode = int(args.episode)
+    max_steps = int(args.MAX_STEPS)
+    block_size = int(update_time_per_episode) * int(num_new_data)
+    if block_size <= 0:
+        raise ValueError("DK evaluation block_size must be positive.")
+    if max_steps < 2 * t_horizon:
+        raise ValueError("MAX_STEPS must be at least 2 * T for DK evaluation.")
+
+    env, _, _, _, constraint_dim, _ = _build_scene(example_name, seed, device, max(1, block_size))
+    dk_policy = _build_dk_policy(example_name, env, device, seed)
+    observation = env.reset()
+    reward_average_save = []
+    cost_average_save = []
+    reward_window = []
+    cost_window = []
+
+    for t in range(max_steps):
+        action = dk_policy.sample_action(observation)
+        observation, reward, done, info = env.step(action)
+
+        if t >= 2 * t_horizon:
+            reward_window.append(float(reward))
+            cost_window.append(float(info.get("cost", 0.0)) / max(constraint_dim, 1))
+            if ((t + 1 - 2 * t_horizon) % block_size) == 0:
+                reward_average_save.append(float(np.mean(reward_window)))
+                cost_average_save.append(float(np.mean(cost_window)))
+                reward_window = []
+                cost_window = []
+
+        if done:
+            observation = env.reset()
+
+    if len(reward_average_save) != episode or len(cost_average_save) != episode:
+        raise ValueError(
+            "DK evaluation output length mismatch. expected episode={0}, got reward={1}, cost={2}".format(
+                episode,
+                len(reward_average_save),
+                len(cost_average_save),
+            )
+        )
+    return reward_average_save, cost_average_save
+
+
+def DK_main(args, example_name):
+    return _run_dk_main(args, example_name)
 
 
 def PRCRL_main(args, example_name, return_aux=False):

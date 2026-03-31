@@ -221,14 +221,6 @@ def _finalize_actor_rho_args(args):
         args.beta_rho_pow = float(DEFAULT_BETA_RHO_POW)
     else:
         args.beta_rho_pow = float(args.beta_rho_pow)
-
-    if float(args.beta_rho_pow) <= float(args.beta_actor_pow):
-        raise ValueError(
-            "beta_rho_pow must be greater than beta_actor_pow. got beta_actor_pow={0}, beta_rho_pow={1}".format(
-                args.beta_actor_pow,
-                args.beta_rho_pow,
-            )
-        )
     return args
 
 

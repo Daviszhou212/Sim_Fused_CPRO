@@ -76,6 +76,15 @@ PLOT_SERIES = [
         "prefer_seed_suffix": True,
     },
     {
+        "label": "DK",
+        "artifact_group": "DK",
+        "reward_stem": "DK_reward_default.mat",
+        "cost_stem": "DK_cost_default.mat",
+        "color": "#8C8C00",
+        "marker": "*",
+        "prefer_seed_suffix": True,
+    },
+    {
         "label": "ACPO",
         "artifact_group": "ACPO",
         "reward_stem": "ACPO_reward_b500.mat",

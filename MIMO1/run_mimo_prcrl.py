@@ -28,16 +28,20 @@ DEFAULT_UPDATE_TIME_PER_EPISODE = 10
 DEFAULT_NUM_UPDATE_TIME = DEFAULT_EPISODE * DEFAULT_UPDATE_TIME_PER_EPISODE
 DEFAULT_ALPHA_POW = 0.5
 DEFAULT_BETA_ACTOR_POW = 0.6
-DEFAULT_BETA_RHO_POW = 0.9
+DEFAULT_BETA_RHO_POW = 0.1
 DEFAULT_ETA_POW = 0.01
-DEFAULT_GAMMA_POW_REWARD = 0.2
-DEFAULT_GAMMA_POW_COST = 0.2
-DEFAULT_TAU_REWARD = 5.0
+DEFAULT_GAMMA_POW_REWARD = 0.3
+DEFAULT_GAMMA_POW_COST = 0.3
+DEFAULT_TAU_REWARD = 1.0
 DEFAULT_TAU_COST = 1.0
 
 OLD_POLICY_BQ_LIST = [(100, 1)]
 OLD_POLICY_PRETRAIN_EPISODE = 40
 OLD_POLICY_CHECKPOINT_ROOT = os.path.join(BASE_DIR, "checkpoints", "SLDAC")
+NEW_POLICY_INIT_BQ = (100, 1)
+NEW_POLICY_INIT_SEED = 0
+NEW_POLICY_INIT_PRETRAIN_EPISODE = 10
+NEW_POLICY_INIT_CHECKPOINT_ROOT = OLD_POLICY_CHECKPOINT_ROOT
 
 
 def build_python_config():
@@ -61,6 +65,10 @@ def build_python_config():
         "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
         "old_policy_pretrain_episode": int(OLD_POLICY_PRETRAIN_EPISODE),
         "old_policy_checkpoint_root": str(OLD_POLICY_CHECKPOINT_ROOT),
+        "new_policy_init": NEW_POLICY_INIT_BQ,
+        "new_policy_seed": int(NEW_POLICY_INIT_SEED),
+        "new_policy_pretrain_episode": int(NEW_POLICY_INIT_PRETRAIN_EPISODE),
+        "new_policy_checkpoint_root": str(NEW_POLICY_INIT_CHECKPOINT_ROOT),
     }
 
 
@@ -151,6 +159,24 @@ def _parse_old_policy_cli(old_policies_text):
     return _dedupe_run_tags(run_tags)
 
 
+def _normalize_new_policy_init_spec(init_spec):
+    if init_spec is None:
+        return ""
+    if isinstance(init_spec, str):
+        run_tags = _parse_old_policy_cli(init_spec)
+    elif isinstance(init_spec, (list, tuple)) and len(init_spec) == 2 and (not isinstance(init_spec[0], (list, tuple))):
+        run_tags = _normalize_old_policy_bq_list([init_spec])
+    else:
+        raise ValueError(
+            "NEW_POLICY_INIT_BQ must be None, a (b, q) pair, or a string like 'b100:q10'. got {0!r}".format(
+                init_spec
+            )
+        )
+    if len(run_tags) > 1:
+        raise ValueError("new policy init expects a single (b, q) pair. got {0}".format(", ".join(run_tags)))
+    return "" if not run_tags else str(run_tags[0])
+
+
 def _resolve_old_policy_args(args):
     args.seed = int(getattr(args, "seed", DEFAULT_SEED))
     args.old_policy_seed = int(getattr(args, "old_policy_seed", DEFAULT_OLD_POLICY_SEED))
@@ -167,11 +193,38 @@ def _resolve_old_policy_args(args):
 
     checkpoint_root = getattr(args, "old_policy_checkpoint_root", None) or OLD_POLICY_CHECKPOINT_ROOT
     args.old_policy_run_tags = ",".join(run_tags)
+    args.old_policy_pretrain_episode = pretrain_episode
+    args.old_policy_checkpoint_root = checkpoint_root
     args.pretrain_episode = pretrain_episode
     args.checkpoint_root = checkpoint_root
     if run_tags and (pretrain_episode <= 0):
         raise ValueError(
             "old policy pretrain_episode must be a positive integer when old policies are configured. got {0}".format(
+                pretrain_episode
+            )
+        )
+    return args
+
+
+def _resolve_new_policy_init_args(args):
+    args.new_policy_seed = int(getattr(args, "new_policy_seed", DEFAULT_SEED))
+    init_spec = getattr(args, "new_policy_init", NEW_POLICY_INIT_BQ)
+    run_tag = _normalize_new_policy_init_spec(init_spec)
+
+    if getattr(args, "new_policy_pretrain_episode", None) is None:
+        pretrain_episode = int(NEW_POLICY_INIT_PRETRAIN_EPISODE)
+    else:
+        pretrain_episode = int(args.new_policy_pretrain_episode)
+
+    checkpoint_root = getattr(args, "new_policy_checkpoint_root", None) or NEW_POLICY_INIT_CHECKPOINT_ROOT
+
+    args.new_policy_run_tag = run_tag
+    args.new_policy_pretrain_episode = pretrain_episode
+    args.new_policy_checkpoint_root = checkpoint_root
+
+    if run_tag and (pretrain_episode <= 0):
+        raise ValueError(
+            "new policy pretrain_episode must be a positive integer when new actor init is configured. got {0}".format(
                 pretrain_episode
             )
         )
@@ -202,6 +255,26 @@ def _validate_old_policy_checkpoints(args):
     return args
 
 
+def _validate_new_policy_checkpoint(args):
+    run_tag = str(getattr(args, "new_policy_run_tag", "")).strip()
+    if not run_tag:
+        return args
+
+    checkpoint_path = _resolve_sldac_checkpoint_path(
+        args,
+        EXAMPLE_NAME,
+        run_tag,
+        int(args.new_policy_pretrain_episode),
+        int(args.new_policy_seed),
+        checkpoint_root=args.new_policy_checkpoint_root,
+    )
+    print("selected new policy init run_tag:", run_tag)
+    print("selected new policy init seed:", int(args.new_policy_seed))
+    print("selected new policy init pretrain_episode:", int(args.new_policy_pretrain_episode))
+    print("verified new policy init checkpoint:", run_tag, "->", checkpoint_path)
+    return args
+
+
 def _finalize_actor_rho_powers(args):
     if getattr(args, "beta_actor_pow", None) is None:
         args.beta_actor_pow = float(DEFAULT_BETA_ACTOR_POW)
@@ -212,14 +285,6 @@ def _finalize_actor_rho_powers(args):
         args.beta_rho_pow = float(DEFAULT_BETA_RHO_POW)
     else:
         args.beta_rho_pow = float(args.beta_rho_pow)
-
-    if float(args.beta_rho_pow) <= float(args.beta_actor_pow):
-        raise ValueError(
-            "beta_rho_pow must be greater than beta_actor_pow. got beta_actor_pow={0}, beta_rho_pow={1}".format(
-                args.beta_actor_pow,
-                args.beta_rho_pow,
-            )
-        )
     return args
 
 
@@ -328,6 +393,10 @@ def build_parser():
     parser.add_argument("--old-policy-seed", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-checkpoint-root", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--new-policy-init", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--new-policy-seed", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--new-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--new-policy-checkpoint-root", type=str, default=argparse.SUPPRESS)
     return parser
 
 
@@ -377,8 +446,10 @@ def main():
         print(ignored_message)
     args = _finalize_actor_rho_powers(args)
     args = _resolve_old_policy_args(args)
-    _migrate_legacy_checkpoints(args.checkpoint_root, EXAMPLE_NAME, default_seed=DEFAULT_OLD_POLICY_SEED)
+    args = _resolve_new_policy_init_args(args)
+    _migrate_legacy_checkpoints(args.old_policy_checkpoint_root, EXAMPLE_NAME, default_seed=DEFAULT_OLD_POLICY_SEED)
     args = _validate_old_policy_checkpoints(args)
+    args = _validate_new_policy_checkpoint(args)
     experiment_seeds = resolve_experiment_seeds(args, DEFAULT_SEED)
     print("experiment seeds:", ", ".join(str(seed_value) for seed_value in experiment_seeds))
     for seed_value in experiment_seeds:

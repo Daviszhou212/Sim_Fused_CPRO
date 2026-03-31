@@ -25,8 +25,31 @@ OBJECTIVE_LABEL = "Objective cost (avg. total transmit power)"
 COST_LABEL = "Constraint cost (avg. user delay backlog)"
 REUSE_LABEL = "Policy reuse probability"
 
-# MIMO 特有展示配置：仅允许 HRL objective 曲线使用可视化偏移，图例中不显示偏移文本。
+# MIMO 特有展示配置：仅允许 HRL / PRCRL objective 曲线使用可视化偏移，图例中不显示偏移文本。
 HRL_OBJECTIVE_OFFSET = 0.3
+PRCRL_OBJECTIVE_OFFSET = 0.3
+
+# 平滑显示配置：仅影响绘图展示，不修改原始 mat 数据；窗口越大，曲线越平滑。
+FUSED_CPRO_SMOOTH_ENABLE = False
+FUSED_CPRO_SMOOTH_WINDOW = 5
+FUSED_CPRO_RHO_NEW_SMOOTH_ENABLE = False
+FUSED_CPRO_RHO_NEW_SMOOTH_WINDOW = 5
+FUSED_CPRO_COS_RHO_SMOOTH_ENABLE = False
+FUSED_CPRO_COS_RHO_SMOOTH_WINDOW = 5
+HRL_SMOOTH_ENABLE = False
+HRL_SMOOTH_WINDOW = 5
+PRCRL_SMOOTH_ENABLE = False
+PRCRL_SMOOTH_WINDOW = 5
+SLDAC_SMOOTH_ENABLE = False
+SLDAC_SMOOTH_WINDOW = 5
+DK_SMOOTH_ENABLE = False
+DK_SMOOTH_WINDOW = 5
+SCAOPO_SMOOTH_ENABLE = False
+SCAOPO_SMOOTH_WINDOW = 5
+PPO_SMOOTH_ENABLE = False
+PPO_SMOOTH_WINDOW = 5
+CPO_SMOOTH_ENABLE = False
+CPO_SMOOTH_WINDOW = 5
 
 # 绘图目标配置：直接在这里增删曲线即可，不依赖 CLI。
 PLOT_SERIES = [
@@ -39,38 +62,59 @@ PLOT_SERIES = [
         "color": "#0072B2",
         "marker": "o",
         "prefer_seed_suffix": True,
+        "smooth_enable": FUSED_CPRO_SMOOTH_ENABLE,
+        "smooth_window": FUSED_CPRO_SMOOTH_WINDOW,
     },
-    {
-        "label": "Fused-CPRO-CosRho",
-        "artifact_group": "Fused_CPRO_CosRho",
-        "reward_stem": f"Fused_CPRO_CosRho_reward_{RUN_TAG}.mat",
-        "cost_stem": f"Fused_CPRO_CosRho_cost_{RUN_TAG}.mat",
-        "rho_stem": f"Fused_CPRO_CosRho_rho_{RUN_TAG}.mat",
-        "color": "#2A9D8F",
-        "marker": "h",
-        "prefer_seed_suffix": True,
-    },
-    {
-        "label": "HRL",
-        "artifact_group": "HRL",
-        "reward_stem": f"HRL_reward_{RUN_TAG}.mat",
-        "cost_stem": f"HRL_cost_{RUN_TAG}.mat",
-        "rho_stem": f"HRL_rho_{RUN_TAG}.mat",
-        "color": "#E69F00",
-        "marker": "P",
-        "prefer_seed_suffix": True,
-        "objective_offset": HRL_OBJECTIVE_OFFSET,
-    },
-    {
-        "label": "PRCRL",
-        "artifact_group": "PRCRL",
-        "reward_stem": f"PRCRL_reward_{RUN_TAG}.mat",
-        "cost_stem": f"PRCRL_cost_{RUN_TAG}.mat",
-        "rho_stem": f"PRCRL_rho_{RUN_TAG}.mat",
-        "color": "#8C564B",
-        "marker": "X",
-        "prefer_seed_suffix": True,
-    },
+    # {
+    #     "label": "Fused-CPRO-RhoNew",
+    #     "artifact_group": "Fused_CPRO_RhoNew",
+    #     "reward_stem": f"Fused_CPRO_RhoNew_reward_{RUN_TAG}.mat",
+    #     "cost_stem": f"Fused_CPRO_RhoNew_cost_{RUN_TAG}.mat",
+    #     "rho_stem": f"Fused_CPRO_RhoNew_rho_{RUN_TAG}.mat",
+    #     "color": "#4C78A8",
+    #     "marker": "<",
+    #     "prefer_seed_suffix": True,
+    #     "smooth_enable": FUSED_CPRO_RHO_NEW_SMOOTH_ENABLE,
+    #     "smooth_window": FUSED_CPRO_RHO_NEW_SMOOTH_WINDOW,
+    # },
+    # {
+    #     "label": "Fused-CPRO-CosRho",
+    #     "artifact_group": "Fused_CPRO_CosRho",
+    #     "reward_stem": f"Fused_CPRO_CosRho_reward_{RUN_TAG}.mat",
+    #     "cost_stem": f"Fused_CPRO_CosRho_cost_{RUN_TAG}.mat",
+    #     "rho_stem": f"Fused_CPRO_CosRho_rho_{RUN_TAG}.mat",
+    #     "color": "#2A9D8F",
+    #     "marker": "h",
+    #     "prefer_seed_suffix": True,
+    #     "smooth_enable": FUSED_CPRO_COS_RHO_SMOOTH_ENABLE,
+    #     "smooth_window": FUSED_CPRO_COS_RHO_SMOOTH_WINDOW,
+    # },
+    # {
+    #     "label": "HRL",
+    #     "artifact_group": "HRL",
+    #     "reward_stem": f"HRL_reward_{RUN_TAG}.mat",
+    #     "cost_stem": f"HRL_cost_{RUN_TAG}.mat",
+    #     "rho_stem": f"HRL_rho_{RUN_TAG}.mat",
+    #     "color": "#E69F00",
+    #     "marker": "P",
+    #     "prefer_seed_suffix": True,
+    #     "objective_offset": HRL_OBJECTIVE_OFFSET,
+    #     "smooth_enable": HRL_SMOOTH_ENABLE,
+    #     "smooth_window": HRL_SMOOTH_WINDOW,
+    # },
+    # {
+    #     "label": "PRCRL",
+    #     "artifact_group": "PRCRL",
+    #     "reward_stem": f"PRCRL_reward_{RUN_TAG}.mat",
+    #     "cost_stem": f"PRCRL_cost_{RUN_TAG}.mat",
+    #     "rho_stem": f"PRCRL_rho_{RUN_TAG}.mat",
+    #     "color": "#8C564B",
+    #     "marker": "X",
+    #     "prefer_seed_suffix": True,
+    #     "objective_offset": PRCRL_OBJECTIVE_OFFSET,
+    #     "smooth_enable": PRCRL_SMOOTH_ENABLE,
+    #     "smooth_window": PRCRL_SMOOTH_WINDOW,
+    # },
     {
         "label": "SLDAC",
         "artifact_group": "SLDAC",
@@ -79,34 +123,53 @@ PLOT_SERIES = [
         "color": "#D55E00",
         "marker": "s",
         "prefer_seed_suffix": True,
+        "smooth_enable": SLDAC_SMOOTH_ENABLE,
+        "smooth_window": SLDAC_SMOOTH_WINDOW,
     },
-    {
-        "label": "SCAOPO",
-        "artifact_group": "SCAOPO",
-        "reward_stem": "SCAOPO_reward_100.mat",
-        "cost_stem": "SCAOPO_cost_100.mat",
-        "color": "#009E73",
-        "marker": "^",
-        "prefer_seed_suffix": False,
-    },
-    {
-        "label": "PPO",
-        "artifact_group": "ppo",
-        "reward_stem": "reward_ppo_100.mat",
-        "cost_stem": "cost_ppo_100.mat",
-        "color": "#CC79A7",
-        "marker": "D",
-        "prefer_seed_suffix": False,
-    },
-    {
-        "label": "CPO",
-        "artifact_group": "cpo",
-        "reward_stem": "reward_cpo_100.mat",
-        "cost_stem": "cost_cpo_100.mat",
-        "color": "#7E2F8E",
-        "marker": "v",
-        "prefer_seed_suffix": False,
-    },
+    # {
+    #     "label": "DK",
+    #     "artifact_group": "DK",
+    #     "reward_stem": f"DK_reward_{RUN_TAG}.mat",
+    #     "cost_stem": f"DK_cost_{RUN_TAG}.mat",
+    #     "color": "#8C8C00",
+    #     "marker": "*",
+    #     "prefer_seed_suffix": True,
+    #     "smooth_enable": DK_SMOOTH_ENABLE,
+    #     "smooth_window": DK_SMOOTH_WINDOW,
+    # },
+    # {
+    #     "label": "SCAOPO",
+    #     "artifact_group": "SCAOPO",
+    #     "reward_stem": "SCAOPO_reward_100.mat",
+    #     "cost_stem": "SCAOPO_cost_100.mat",
+    #     "color": "#009E73",
+    #     "marker": "^",
+    #     "prefer_seed_suffix": False,
+    #     "smooth_enable": SCAOPO_SMOOTH_ENABLE,
+    #     "smooth_window": SCAOPO_SMOOTH_WINDOW,
+    # },
+    # {
+    #     "label": "PPO",
+    #     "artifact_group": "ppo",
+    #     "reward_stem": "reward_ppo_100.mat",
+    #     "cost_stem": "cost_ppo_100.mat",
+    #     "color": "#CC79A7",
+    #     "marker": "D",
+    #     "prefer_seed_suffix": False,
+    #     "smooth_enable": PPO_SMOOTH_ENABLE,
+    #     "smooth_window": PPO_SMOOTH_WINDOW,
+    # },
+    # {
+    #     "label": "CPO",
+    #     "artifact_group": "cpo",
+    #     "reward_stem": "reward_cpo_100.mat",
+    #     "cost_stem": "cost_cpo_100.mat",
+    #     "color": "#7E2F8E",
+    #     "marker": "v",
+    #     "prefer_seed_suffix": False,
+    #     "smooth_enable": CPO_SMOOTH_ENABLE,
+    #     "smooth_window": CPO_SMOOTH_WINDOW,
+    # },
 ]
 
 # 科研绘图样式：单栏尺寸、细网格、较高分辨率，适合论文直接引用。
@@ -138,7 +201,7 @@ SERIES_REQUIRED_KEYS = (
     "marker",
     "prefer_seed_suffix",
 )
-SERIES_OPTIONAL_KEYS = ("rho_stem", "objective_offset")
+SERIES_OPTIONAL_KEYS = ("rho_stem", "objective_offset", "smooth_enable", "smooth_window")
 SEED_SUFFIX_PATTERN = re.compile(r"_seed\d+$")
 
 
@@ -180,6 +243,35 @@ def _series_label(series_config):
 def _load_curve(mat_path):
     data = loadmat(mat_path)
     return np.asarray(data["array"], dtype=np.float64).reshape(-1)
+
+
+def _moving_average(values, window):
+    arr = np.asarray(values, dtype=np.float64).reshape(-1)
+    if arr.size <= 0:
+        return arr
+    window = int(window)
+    if window <= 1:
+        return arr.copy()
+
+    out = np.zeros_like(arr)
+    for idx in range(arr.size):
+        left = max(0, idx - window + 1)
+        out[idx] = np.mean(arr[left : idx + 1])
+    return out
+
+
+def _series_smooth_enabled(series_config):
+    return bool(series_config.get("smooth_enable", False))
+
+
+def _series_smooth_window(series_config):
+    return int(series_config.get("smooth_window", 5))
+
+
+def _maybe_smooth(series_config, values):
+    if not _series_smooth_enabled(series_config):
+        return np.asarray(values, dtype=np.float64)
+    return _moving_average(values, _series_smooth_window(series_config))
 
 
 def _load_reuse_history(mat_path):
@@ -258,9 +350,15 @@ def _validate_plot_series_config(plot_series):
         if rho_stem is not None:
             if Path(str(rho_stem)).suffix.lower() != ".mat":
                 raise ValueError("PLOT_SERIES[{0}] field rho_stem must point to a .mat file.".format(idx))
-            if str(series_config["artifact_group"]).strip() not in ("Fused_CPRO", "Fused_CPRO_CosRho", "HRL", "PRCRL"):
+            if str(series_config["artifact_group"]).strip() not in (
+                "Fused_CPRO",
+                "Fused_CPRO_RhoNew",
+                "Fused_CPRO_CosRho",
+                "HRL",
+                "PRCRL",
+            ):
                 raise ValueError(
-                    "Only Fused_CPRO, Fused_CPRO_CosRho, HRL or PRCRL series may define rho_stem. Invalid label: {0}".format(
+                    "Only Fused_CPRO, Fused_CPRO_RhoNew, Fused_CPRO_CosRho, HRL or PRCRL series may define rho_stem. Invalid label: {0}".format(
                         label
                     )
                 )
@@ -268,14 +366,33 @@ def _validate_plot_series_config(plot_series):
 
         objective_offset = series_config.get("objective_offset")
         if objective_offset is not None:
-            if label != "HRL":
-                raise ValueError("Only HRL series may define objective_offset. Invalid label: {0}".format(label))
+            if label not in ("HRL", "PRCRL"):
+                raise ValueError(
+                    "Only HRL or PRCRL series may define objective_offset. Invalid label: {0}".format(label)
+                )
             try:
                 float(objective_offset)
             except (TypeError, ValueError) as exc:
                 raise TypeError(
                     "PLOT_SERIES[{0}] field objective_offset must be numeric.".format(idx)
                 ) from exc
+
+        smooth_enable = series_config.get("smooth_enable")
+        if smooth_enable is not None and not isinstance(smooth_enable, bool):
+            raise TypeError("PLOT_SERIES[{0}] field smooth_enable must be bool.".format(idx))
+
+        smooth_window = series_config.get("smooth_window")
+        if smooth_window is not None:
+            try:
+                smooth_window = int(smooth_window)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    "PLOT_SERIES[{0}] field smooth_window must be an integer.".format(idx)
+                ) from exc
+            if smooth_window <= 0:
+                raise ValueError(
+                    "PLOT_SERIES[{0}] field smooth_window must be positive.".format(idx)
+                )
 
     return reuse_series
 
@@ -367,8 +484,8 @@ def _objective_plot_values(series_config, values):
     values = np.asarray(values, dtype=np.float64)
     offset = float(series_config.get("objective_offset", 0.0))
     if offset == 0.0:
-        return values
-    return values + offset
+        return _maybe_smooth(series_config, values)
+    return _maybe_smooth(series_config, values + offset)
 
 
 def _plot_algorithm_curves(ax, curves, transform_fn=None):
@@ -378,6 +495,8 @@ def _plot_algorithm_curves(ax, curves, transform_fn=None):
         plot_values = values[:common_length]
         if transform_fn is not None:
             plot_values = transform_fn(series_config, plot_values)
+        else:
+            plot_values = _maybe_smooth(series_config, plot_values)
         ax.plot(
             episodes,
             plot_values,
@@ -430,7 +549,8 @@ def _plot_reuse(reuse_plots):
     legend_handles = None
     legend_labels = None
 
-    for idx, (series_label, episodes, new_policy, dk_policy, old_policy) in enumerate(reuse_plots):
+    for idx, (series_config, episodes, new_policy, dk_policy, old_policy) in enumerate(reuse_plots):
+        series_label = _series_label(series_config)
         common_length, (episodes, new_policy, dk_policy, old_policy) = _truncate_plot_series(
             episodes,
             new_policy,
@@ -438,6 +558,7 @@ def _plot_reuse(reuse_plots):
             old_policy,
         )
         ax = axes[idx]
+        # reuse 图保持原始混合权重，不做平滑，避免掩盖策略切换波动。
         ax.plot(
             episodes,
             new_policy,
@@ -520,7 +641,7 @@ def main():
         if reuse_data is None:
             continue
         episodes = np.arange(1, len(reuse_data[0]) + 1, dtype=np.int32)
-        reuse_plots.append((_series_label(reuse_config), episodes, *reuse_data))
+        reuse_plots.append((reuse_config, episodes, *reuse_data))
     if reuse_plots:
         outputs.extend(_plot_reuse(reuse_plots))
 

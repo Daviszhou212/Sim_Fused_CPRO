@@ -15,6 +15,10 @@ def build_python_config():
         "rho_min_old_policy": 1e-4,
         "old_policy_pretrain_episode": 40,
         "old_policy_checkpoint_root": "checkpoints/SLDAC",
+        "new_policy_init": (100, 10),
+        "new_policy_seed": 7,
+        "new_policy_pretrain_episode": 35,
+        "new_policy_checkpoint_root": "checkpoints/SLDAC/new_actor",
     }
 
 
@@ -41,6 +45,10 @@ class CliConfigPriorityTest(unittest.TestCase):
             rho_min_old_policy=0.02,
             old_policy_pretrain_episode=12,
             old_policy_checkpoint_root="tmp/checkpoints",
+            new_policy_init="b500:q10",
+            new_policy_seed=9,
+            new_policy_pretrain_episode=22,
+            new_policy_checkpoint_root="tmp/new-checkpoints",
         )
         args, ignored_options = apply_python_config_priority(
             cli_args,
@@ -61,6 +69,14 @@ class CliConfigPriorityTest(unittest.TestCase):
                 "12",
                 "--old-policy-checkpoint-root",
                 "tmp/checkpoints",
+                "--new-policy-init",
+                "b500:q10",
+                "--new-policy-seed",
+                "9",
+                "--new-policy-pretrain-episode",
+                "22",
+                "--new-policy-checkpoint-root",
+                "tmp/new-checkpoints",
             ],
         )
         self.assertEqual(args.seed, 1)
@@ -70,6 +86,10 @@ class CliConfigPriorityTest(unittest.TestCase):
         self.assertEqual(args.rho_min_old_policy, 1e-4)
         self.assertEqual(args.old_policy_pretrain_episode, 40)
         self.assertEqual(args.old_policy_checkpoint_root, "checkpoints/SLDAC")
+        self.assertEqual(args.new_policy_init, (100, 10))
+        self.assertEqual(args.new_policy_seed, 7)
+        self.assertEqual(args.new_policy_pretrain_episode, 35)
+        self.assertEqual(args.new_policy_checkpoint_root, "checkpoints/SLDAC/new_actor")
         self.assertEqual(
             ignored_options,
             [
@@ -80,9 +100,15 @@ class CliConfigPriorityTest(unittest.TestCase):
                 "--rho-min-old-policy",
                 "--old-policy-pretrain-episode",
                 "--old-policy-checkpoint-root",
+                "--new-policy-init",
+                "--new-policy-seed",
+                "--new-policy-pretrain-episode",
+                "--new-policy-checkpoint-root",
             ],
         )
-        self.assertIn("--old-policy-pretrain-episode", format_ignored_cli_overrides(ignored_options))
+        ignored_message = format_ignored_cli_overrides(ignored_options)
+        self.assertIn("--old-policy-pretrain-episode", ignored_message)
+        self.assertIn("--new-policy-pretrain-episode", ignored_message)
 
     def test_seed_and_seeds_cli_do_not_change_experiment_seed_set(self):
         cli_args = argparse.Namespace(seed=99, seeds="9,10")
