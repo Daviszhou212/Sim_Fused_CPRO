@@ -6,7 +6,12 @@ import numpy as np
 from scipy.io import savemat
 
 from artifact_paths import build_algorithm_artifact_path
-from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
+from seed_utils import (
+    apply_python_config_priority,
+    build_mat_metadata_from_args,
+    format_ignored_cli_overrides,
+    resolve_experiment_seeds,
+)
 from Fused_CPRO import Fused_CPRO_main, _resolve_sldac_checkpoint_path
 from run_mimo_sldac import _migrate_legacy_checkpoints
 
@@ -38,7 +43,7 @@ DEFAULT_BETA_ACTOR_POW = 0.7
 DEFAULT_BETA_RHO_POW = 0.1
 # xi0 表示 offline 分支权重；0.5 表示 online/offline 两个分支各占一半。
 DEFAULT_XI0 = 0
-DEFAULT_XI0 = 0.5
+DEFAULT_XI0 = 1
 # xi_pow 表示 xi 的幂次衰减系数，值越大代表离线权重下降越快。
 DEFAULT_XI_POW = 0.9
 DEFAULT_ETA_POW = 0.01
@@ -99,11 +104,7 @@ PROTECTED_CLI_FIELDS = tuple(build_python_config().keys())
 
 
 def _build_mat_metadata(args, algorithm, run_tag):
-    return {
-        "seed": np.asarray([[int(getattr(args, "seed", DEFAULT_SEED))]], dtype=np.int32),
-        "algorithm": np.asarray([str(algorithm)], dtype="U32"),
-        "run_tag": np.asarray([str(run_tag)], dtype="U32"),
-    }
+    return build_mat_metadata_from_args(args, algorithm, run_tag, DEFAULT_SEED)
 
 
 def _save_mat_with_seed(path, payload, args, algorithm, run_tag):

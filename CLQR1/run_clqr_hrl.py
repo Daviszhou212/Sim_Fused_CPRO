@@ -10,7 +10,12 @@ import numpy as np
 from scipy.io import savemat
 
 from artifact_paths import build_algorithm_artifact_path
-from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
+from seed_utils import (
+    apply_python_config_priority,
+    build_mat_metadata_from_args,
+    format_ignored_cli_overrides,
+    resolve_experiment_seeds,
+)
 from Fused_CPRO import HRL_main, _resolve_sldac_checkpoint_path
 from run_clqr_sldac import _migrate_legacy_checkpoints
 
@@ -28,11 +33,11 @@ DEFAULT_NUM_UPDATE_TIME = DEFAULT_EPISODE * DEFAULT_UPDATE_TIME_PER_EPISODE
 DEFAULT_ALPHA_POW = 0.6
 DEFAULT_BETA_POW = 0.8
 DEFAULT_BETA_ACTOR_POW = DEFAULT_BETA_POW
-DEFAULT_BETA_RHO_POW = 0.9
+DEFAULT_BETA_RHO_POW = 0.15
 DEFAULT_ETA_POW = 0.01
 DEFAULT_GAMMA_POW_REWARD = 0.27
 DEFAULT_GAMMA_POW_COST = 0.27
-DEFAULT_TAU_REWARD = 6.0
+DEFAULT_TAU_REWARD = 10.0
 DEFAULT_TAU_COST = 10.0
 DEFAULT_DEVICE = "cpu"
 DEFAULT_OLD_POLICY_SEED = 1
@@ -41,8 +46,8 @@ DEFAULT_OLD_POLICY_CHECKPOINT_ROOT = os.path.join(os.path.dirname(os.path.abspat
 EXAMPLE_NAME = "CLQR"
 ALGORITHM_NAME = "HRL"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OLD_POLICY_BQ_LIST = [(100, 10)]
-OLD_POLICY_PRETRAIN_EPISODE = 50
+OLD_POLICY_BQ_LIST = [(100, 5)]
+OLD_POLICY_PRETRAIN_EPISODE = 10
 OLD_POLICY_CHECKPOINT_ROOT = DEFAULT_OLD_POLICY_CHECKPOINT_ROOT
 
 
@@ -76,11 +81,7 @@ PROTECTED_CLI_FIELDS = tuple(build_python_config().keys())
 
 
 def _build_mat_metadata(args, algorithm, run_tag):
-    return {
-        "seed": np.asarray([[int(getattr(args, "seed", DEFAULT_SEED))]], dtype=np.int32),
-        "algorithm": np.asarray([str(algorithm)], dtype="U32"),
-        "run_tag": np.asarray([str(run_tag)], dtype="U32"),
-    }
+    return build_mat_metadata_from_args(args, algorithm, run_tag, DEFAULT_SEED)
 
 
 def _save_mat_with_seed(path, payload, args, algorithm, run_tag):

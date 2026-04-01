@@ -10,7 +10,12 @@ import numpy as np
 from scipy.io import savemat
 
 from artifact_paths import build_algorithm_artifact_path
-from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
+from seed_utils import (
+    apply_python_config_priority,
+    build_mat_metadata_from_args,
+    format_ignored_cli_overrides,
+    resolve_experiment_seeds,
+)
 from Fused_CPRO import Fused_CPRO_main, _resolve_sldac_checkpoint_path
 from run_clqr_sldac import _migrate_legacy_checkpoints
 
@@ -25,38 +30,40 @@ DEFAULT_WINDOW = 10000
 DEFAULT_EPISODE = 101
 DEFAULT_UPDATE_TIME_PER_EPISODE = 10
 DEFAULT_NUM_UPDATE_TIME = DEFAULT_EPISODE * DEFAULT_UPDATE_TIME_PER_EPISODE
-DEFAULT_ALPHA_POW = 0.5
-DEFAULT_BETA_POW = 0.7
+DEFAULT_ALPHA_POW = 0.4
+DEFAULT_BETA_POW = 0.6
 DEFAULT_BETA_ACTOR_POW = DEFAULT_BETA_POW
-DEFAULT_BETA_RHO_POW = 0.9
+DEFAULT_BETA_RHO_POW = 0.1
 # xi0 表示 offline 分支权重；0.5 表示 online/offline 两个分支各占一半。
 DEFAULT_XI0 = 0.5
-DEFAULT_XI_POW = DEFAULT_BETA_RHO_POW
+DEFAULT_XI_POW = 0.9
 # xi_pow 表示 xi 的幂次衰减系数，值越大代表离线权重下降越快。
 DEFAULT_ETA_POW = 0.01
-DEFAULT_GAMMA_POW_REWARD = 0.27
-DEFAULT_GAMMA_POW_COST = 0.27
-DEFAULT_TAU_REWARD = 5.0
+DEFAULT_GAMMA_POW_REWARD = 0.3
+DEFAULT_GAMMA_POW_COST = 0.3
+DEFAULT_TAU_REWARD = 10.0
 DEFAULT_TAU_COST = 10.0
-DEFAULT_RHO_MIN_NEW_ACTOR = 0.2
+DEFAULT_RHO_MIN_NEW_ACTOR = 1e-4
 DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
 DEFAULT_DEVICE = "cpu"
-DEFAULT_OLD_POLICY_SEED = 1
-DEFAULT_OLD_POLICY_CHECKPOINT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints", "SLDAC")
+
 
 EXAMPLE_NAME = "CLQR"
 ALGORITHM_NAME = "Fused_CPRO"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # old policy 选择：默认显式指定 SLDAC checkpoint，口径与 MIMO1 保持一致。
-OLD_POLICY_BQ_LIST = [(100, 10)]
-OLD_POLICY_PRETRAIN_EPISODE = 50
+DEFAULT_OLD_POLICY_SEED = 5
+DEFAULT_OLD_POLICY_CHECKPOINT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints", "SLDAC")
+OLD_POLICY_BQ_LIST = [(100, 5)]
+OLD_POLICY_PRETRAIN_EPISODE = 100
 OLD_POLICY_CHECKPOINT_ROOT = DEFAULT_OLD_POLICY_CHECKPOINT_ROOT
-NEW_POLICY_INIT_BQ = None
-NEW_POLICY_INIT_SEED = DEFAULT_SEED
-NEW_POLICY_INIT_PRETRAIN_EPISODE = OLD_POLICY_PRETRAIN_EPISODE
+
+NEW_POLICY_INIT_BQ = (100, 5)
+NEW_POLICY_INIT_SEED = 5
+NEW_POLICY_INIT_PRETRAIN_EPISODE = 100
 NEW_POLICY_INIT_CHECKPOINT_ROOT = OLD_POLICY_CHECKPOINT_ROOT
-LOAD_NEW_ACTOR = False
+LOAD_NEW_ACTOR = True
 
 
 # 该入口以 .py 顶部配置为唯一配置源，CLI 仅保留帮助与兼容提示。
@@ -98,11 +105,7 @@ PROTECTED_CLI_FIELDS = tuple(build_python_config().keys())
 
 
 def _build_mat_metadata(args, algorithm, run_tag):
-    return {
-        "seed": np.asarray([[int(getattr(args, "seed", DEFAULT_SEED))]], dtype=np.int32),
-        "algorithm": np.asarray([str(algorithm)], dtype="U32"),
-        "run_tag": np.asarray([str(run_tag)], dtype="U32"),
-    }
+    return build_mat_metadata_from_args(args, algorithm, run_tag, DEFAULT_SEED)
 
 
 def _save_mat_with_seed(path, payload, args, algorithm, run_tag):

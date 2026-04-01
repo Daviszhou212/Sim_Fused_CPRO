@@ -1,5 +1,8 @@
 import argparse
+import numbers
 import sys
+
+import numpy as np
 
 
 def _parse_positive_int(value, field_name, source_text):
@@ -85,3 +88,70 @@ def format_ignored_cli_overrides(ignored_options):
     if not normalized_options:
         return ""
     return "Ignored CLI overrides in favor of Python config: {0}".format(", ".join(normalized_options))
+
+
+def _as_matlab_string(value):
+    text = "None" if value is None else str(value)
+    return np.asarray([text], dtype="U{0}".format(max(1, len(text))))
+
+
+def _as_matlab_sequence(values):
+    normalized_values = list(values)
+    if not normalized_values:
+        return np.asarray([], dtype=np.float64)
+
+    if all(isinstance(item, bool) for item in normalized_values):
+        return np.asarray(normalized_values, dtype=np.bool_).reshape(1, -1)
+
+    if all(isinstance(item, numbers.Integral) and not isinstance(item, bool) for item in normalized_values):
+        return np.asarray(normalized_values, dtype=np.int64).reshape(1, -1)
+
+    if all(isinstance(item, numbers.Real) for item in normalized_values):
+        return np.asarray(normalized_values, dtype=np.float64).reshape(1, -1)
+
+    if all(isinstance(item, str) for item in normalized_values):
+        max_length = max(len(item) for item in normalized_values)
+        return np.asarray(normalized_values, dtype="U{0}".format(max(1, max_length)))
+
+    return _as_matlab_string(repr(normalized_values))
+
+
+def _as_matlab_value(value):
+    if value is None:
+        return _as_matlab_string(value)
+
+    if isinstance(value, str):
+        return _as_matlab_string(value)
+
+    if isinstance(value, bool):
+        return np.asarray([[value]], dtype=np.bool_)
+
+    if isinstance(value, numbers.Integral):
+        return np.asarray([[int(value)]], dtype=np.int64)
+
+    if isinstance(value, numbers.Real):
+        return np.asarray([[float(value)]], dtype=np.float64)
+
+    if isinstance(value, dict):
+        return {
+            str(field_name): _as_matlab_value(field_value)
+            for field_name, field_value in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+
+    if isinstance(value, (list, tuple)):
+        return _as_matlab_sequence(value)
+
+    return _as_matlab_string(repr(value))
+
+
+def build_mat_metadata_from_args(args, algorithm, run_tag, default_seed):
+    args_dict = vars(args)
+    return {
+        "seed": np.asarray([[int(getattr(args, "seed", default_seed))]], dtype=np.int32),
+        "algorithm": _as_matlab_string(algorithm),
+        "run_tag": _as_matlab_string(run_tag),
+        "algorithm_params": {
+            str(field_name): _as_matlab_value(field_value)
+            for field_name, field_value in sorted(args_dict.items(), key=lambda item: str(item[0]))
+        },
+    }

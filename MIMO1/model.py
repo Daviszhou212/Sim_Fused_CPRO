@@ -68,18 +68,18 @@ class Critic_net_CLQR(nn.Module):
 		self.state_dim = state_dim
 		self.action_dim = action_dim
 
-		self.fcs1 = nn.Linear(state_dim, 256)
+		self.fcs1 = nn.Linear(state_dim, 64)
 		self.fcs1.weight.data = fanin_init(self.fcs1.weight.data.size())
-		self.fcs2 = nn.Linear(256, 128)
+		self.fcs2 = nn.Linear(64, 32)
 		self.fcs2.weight.data = fanin_init(self.fcs2.weight.data.size())
 
-		self.fca1 = nn.Linear(action_dim, 128)
+		self.fca1 = nn.Linear(action_dim, 32)
 		self.fca1.weight.data = fanin_init(self.fca1.weight.data.size())
 
-		self.fc2 = nn.Linear(256, 128)
+		self.fc2 = nn.Linear(64, 32)
 		self.fc2.weight.data = fanin_init(self.fc2.weight.data.size())
 
-		self.fc3 = nn.Linear(128, 1)
+		self.fc3 = nn.Linear(32, 1)
 		self.fc3.weight.data.uniform_(-EPS, EPS)
 		self.device = device
 		self.to(self.device)

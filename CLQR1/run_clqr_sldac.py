@@ -6,22 +6,27 @@ import numpy as np
 from scipy.io import savemat
 
 from artifact_paths import build_algorithm_artifact_path
-from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
+from seed_utils import (
+    apply_python_config_priority,
+    build_mat_metadata_from_args,
+    format_ignored_cli_overrides,
+    resolve_experiment_seeds,
+)
 from SLDAC import SLDAC_main
 
 
 # 固定复现实验组：沿用当前 CLQR1 既有的四组 SLDAC 配置与 run_tag。
 # 元组字段：run_tag, 日志文案, T, grad_T, num_new_data, Q_update_time。
 SLDAC_RUNS = [
-    ("b500_q10", "SLDAC, no reuse, batchsize=200, q=10", 100, 100, 200, 10),
-    ("b100_q1", "SLDAC, T=500, batchsize=100, q=1", 250, 250, 100, 1),
+    # ("b500_q10", "SLDAC, no reuse, batchsize=200, q=10", 100, 100, 200, 10),
+    # ("b100_q1", "SLDAC, T=500, batchsize=100, q=1", 250, 250, 100, 1),
     ("b100_q5", "SLDAC, T=500, batchsize=100, q=5", 250, 250, 100, 5),
-    ("b100_q10", "SLDAC, T=500, batchsize=100, q=10", 250, 250, 100, 10),
+    # ("b100_q10", "SLDAC, T=500, batchsize=100, q=10", 250, 250, 100, 10),
 ]
 
 # 默认实验超参数：保持与 CLQR1 历史入口一致，只同步 seed/输出管理。
 DEFAULT_SEED = 1
-DEFAULT_SEEDS = (1, 2, 3, 4)
+DEFAULT_SEEDS = (0, 5, )
 DEFAULT_WINDOW = 10000
 DEFAULT_EPISODE = 101
 DEFAULT_UPDATE_TIME_PER_EPISODE = 10
@@ -122,11 +127,7 @@ def _migrate_legacy_checkpoints(checkpoint_root, example_name, default_seed=DEFA
 
 
 def _build_mat_metadata(args, algorithm, run_tag):
-    return {
-        "seed": np.asarray([[int(getattr(args, "seed", DEFAULT_SEED))]], dtype=np.int32),
-        "algorithm": np.asarray([str(algorithm)], dtype="U32"),
-        "run_tag": np.asarray([str(run_tag)], dtype="U32"),
-    }
+    return build_mat_metadata_from_args(args, algorithm, run_tag, DEFAULT_SEED)
 
 
 def _save_mat_with_seed(path, payload, args, algorithm, run_tag):

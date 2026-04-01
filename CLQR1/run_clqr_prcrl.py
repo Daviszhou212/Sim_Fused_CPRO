@@ -10,7 +10,12 @@ import numpy as np
 from scipy.io import savemat
 
 from artifact_paths import build_algorithm_artifact_path
-from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
+from seed_utils import (
+    apply_python_config_priority,
+    build_mat_metadata_from_args,
+    format_ignored_cli_overrides,
+    resolve_experiment_seeds,
+)
 from Fused_CPRO import PRCRL_main, _resolve_sldac_checkpoint_path
 from run_clqr_sldac import _migrate_legacy_checkpoints
 
@@ -27,11 +32,11 @@ DEFAULT_NUM_UPDATE_TIME = DEFAULT_EPISODE * DEFAULT_UPDATE_TIME_PER_EPISODE
 DEFAULT_ALPHA_POW = 0.6
 DEFAULT_BETA_POW = 0.8
 DEFAULT_BETA_ACTOR_POW = DEFAULT_BETA_POW
-DEFAULT_BETA_RHO_POW = 0.9
+DEFAULT_BETA_RHO_POW = 0.6
 DEFAULT_ETA_POW = 0.01
 DEFAULT_GAMMA_POW_REWARD = 0.27
 DEFAULT_GAMMA_POW_COST = 0.27
-DEFAULT_TAU_REWARD = 6.0
+DEFAULT_TAU_REWARD = 10.0
 DEFAULT_TAU_COST = 10.0
 DEFAULT_DEVICE = "cpu"
 DEFAULT_OLD_POLICY_SEED = 1
@@ -40,13 +45,15 @@ DEFAULT_OLD_POLICY_CHECKPOINT_ROOT = os.path.join(os.path.dirname(os.path.abspat
 EXAMPLE_NAME = "CLQR"
 ALGORITHM_NAME = "PRCRL"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OLD_POLICY_BQ_LIST = [(100, 10)]
-OLD_POLICY_PRETRAIN_EPISODE = 50
+OLD_POLICY_BQ_LIST = [(100, 5)]
+OLD_POLICY_PRETRAIN_EPISODE = 10
 OLD_POLICY_CHECKPOINT_ROOT = DEFAULT_OLD_POLICY_CHECKPOINT_ROOT
-NEW_POLICY_INIT_BQ = None
-NEW_POLICY_INIT_SEED = DEFAULT_SEED
-NEW_POLICY_INIT_PRETRAIN_EPISODE = OLD_POLICY_PRETRAIN_EPISODE
+
+NEW_POLICY_INIT_BQ = (100, 5)
+NEW_POLICY_INIT_SEED = 1
+NEW_POLICY_INIT_PRETRAIN_EPISODE = 10
 NEW_POLICY_INIT_CHECKPOINT_ROOT = OLD_POLICY_CHECKPOINT_ROOT
+LOAD_NEW_ACTOR = False
 
 
 def build_python_config():
@@ -71,6 +78,7 @@ def build_python_config():
         "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
         "old_policy_pretrain_episode": int(OLD_POLICY_PRETRAIN_EPISODE),
         "old_policy_checkpoint_root": str(OLD_POLICY_CHECKPOINT_ROOT),
+        "load_new_actor": bool(LOAD_NEW_ACTOR),
         "new_policy_init": NEW_POLICY_INIT_BQ,
         "new_policy_seed": int(NEW_POLICY_INIT_SEED),
         "new_policy_pretrain_episode": int(NEW_POLICY_INIT_PRETRAIN_EPISODE),
@@ -82,11 +90,7 @@ PROTECTED_CLI_FIELDS = tuple(build_python_config().keys())
 
 
 def _build_mat_metadata(args, algorithm, run_tag):
-    return {
-        "seed": np.asarray([[int(getattr(args, "seed", DEFAULT_SEED))]], dtype=np.int32),
-        "algorithm": np.asarray([str(algorithm)], dtype="U32"),
-        "run_tag": np.asarray([str(run_tag)], dtype="U32"),
-    }
+    return build_mat_metadata_from_args(args, algorithm, run_tag, DEFAULT_SEED)
 
 
 def _save_mat_with_seed(path, payload, args, algorithm, run_tag):
@@ -109,6 +113,22 @@ def _parse_positive_int(value, field_name, source_text):
             "invalid {0} in old policy spec {1!r}: expected a positive integer.".format(field_name, source_text)
         )
     return parsed
+
+
+def _parse_bool_flag(value, field_name):
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "y", "on"):
+        return True
+    if text in ("0", "false", "no", "n", "off"):
+        return False
+    raise ValueError(
+        "invalid {0} value {1!r}. expected one of: true/false, yes/no, 1/0, on/off.".format(
+            field_name,
+            value,
+        )
+    )
 
 
 def _format_old_policy_run_tag(batch_size, q_update_time):
@@ -271,6 +291,11 @@ def _validate_new_policy_checkpoint(args):
 
 
 def _finalize_actor_rho_args(args):
+    if getattr(args, "load_new_actor", None) is None:
+        args.load_new_actor = bool(LOAD_NEW_ACTOR)
+    else:
+        args.load_new_actor = _parse_bool_flag(args.load_new_actor, "load_new_actor")
+
     if getattr(args, "beta_actor_pow", None) is None:
         args.beta_actor_pow = float(getattr(args, "beta_pow", DEFAULT_BETA_POW))
     else:
@@ -393,6 +418,7 @@ def build_parser():
     parser.add_argument("--old-policy-seed", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-checkpoint-root", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--load-new-actor", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--new-policy-init", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--new-policy-seed", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--new-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)

@@ -7,7 +7,12 @@ from scipy.io import savemat
 
 from ACPO import ACPO_main
 from artifact_paths import build_algorithm_artifact_path
-from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
+from seed_utils import (
+    apply_python_config_priority,
+    build_mat_metadata_from_args,
+    format_ignored_cli_overrides,
+    resolve_experiment_seeds,
+)
 
 
 EXAMPLE_NAME = "CLQR"
@@ -71,11 +76,7 @@ PROTECTED_CLI_FIELDS = tuple(build_python_config().keys())
 
 
 def _build_mat_metadata(args, run_tag):
-    return {
-        "seed": np.asarray([[int(getattr(args, "seed", DEFAULT_SEED))]], dtype=np.int32),
-        "algorithm": np.asarray([ALGORITHM_NAME], dtype="U32"),
-        "run_tag": np.asarray([str(run_tag)], dtype="U32"),
-    }
+    return build_mat_metadata_from_args(args, ALGORITHM_NAME, run_tag, DEFAULT_SEED)
 
 
 def _save_mat_with_seed(path, payload, args, run_tag):

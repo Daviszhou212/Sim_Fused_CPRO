@@ -2,7 +2,12 @@ import argparse
 import unittest
 
 from run_mimo_sldac import build_python_config as build_mimo_sldac_python_config
-from seed_utils import apply_python_config_priority, format_ignored_cli_overrides, resolve_experiment_seeds
+from seed_utils import (
+    apply_python_config_priority,
+    build_mat_metadata_from_args,
+    format_ignored_cli_overrides,
+    resolve_experiment_seeds,
+)
 
 
 def build_python_config():
@@ -135,6 +140,28 @@ class CliConfigPriorityTest(unittest.TestCase):
         self.assertEqual(args.seeds, "1,2,3,4")
         self.assertEqual(ignored_options, ["--seed", "--seeds"])
         self.assertEqual(resolve_experiment_seeds(args, 0), [1, 2, 3, 4])
+
+    def test_build_mat_metadata_contains_algorithm_params(self):
+        args = argparse.Namespace(
+            seed=3,
+            xi0=0.5,
+            load_new_actor=False,
+            new_policy_init=(100, 10),
+            old_policies=None,
+        )
+        metadata = build_mat_metadata_from_args(args, "Fused_CPRO", "b100_q1", 0)
+
+        self.assertIn("algorithm_params", metadata)
+        self.assertEqual(int(metadata["seed"][0][0]), 3)
+        self.assertEqual(str(metadata["algorithm"][0]), "Fused_CPRO")
+        self.assertEqual(str(metadata["run_tag"][0]), "b100_q1")
+
+        params = metadata["algorithm_params"]
+        self.assertEqual(int(params["seed"][0][0]), 3)
+        self.assertAlmostEqual(float(params["xi0"][0][0]), 0.5)
+        self.assertFalse(bool(params["load_new_actor"][0][0]))
+        self.assertEqual(params["new_policy_init"].tolist(), [[100, 10]])
+        self.assertEqual(str(params["old_policies"][0]), "None")
 
 
 if __name__ == "__main__":
