@@ -22,6 +22,8 @@ from Fused_CPRO import (
 from run_mimo_fused_cpro import build_python_config as build_base_python_config
 from run_mimo_fused_cpro import _finalize_actor_rho_powers
 from run_mimo_fused_cpro_rho_new import build_python_config as build_rho_new_python_config
+from run_mimo_hrl import build_python_config as build_hrl_python_config
+from run_mimo_hrl import _finalize_rho_lower_bounds as finalize_hrl_rho_lower_bounds
 
 
 class _FakeCriticNet:
@@ -160,6 +162,32 @@ class FusedCproRhoBoundsTest(unittest.TestCase):
         config = build_base_python_config()
         self.assertIn("xi_pow", config)
         self.assertGreater(float(config["xi_pow"]), 0.0)
+
+    def test_hrl_run_exposes_rho_lower_bound_knobs(self):
+        config = build_hrl_python_config()
+        self.assertIn("rho_min_new_actor", config)
+        self.assertIn("rho_min_old_policy", config)
+
+    def test_hrl_entry_rho_lower_bounds_accept_feasible_values(self):
+        args = finalize_hrl_rho_lower_bounds(
+            argparse.Namespace(
+                rho_min_new_actor=0.2,
+                rho_min_old_policy=0.1,
+                old_policy_run_tags="b100_q1",
+            )
+        )
+        self.assertAlmostEqual(float(args.rho_min_new_actor), 0.2)
+        self.assertAlmostEqual(float(args.rho_min_old_policy), 0.1)
+
+    def test_hrl_entry_rho_lower_bounds_reject_infeasible_values(self):
+        with self.assertRaises(ValueError):
+            finalize_hrl_rho_lower_bounds(
+                argparse.Namespace(
+                    rho_min_new_actor=0.8,
+                    rho_min_old_policy=0.2,
+                    old_policy_run_tags="b100_q1",
+                )
+            )
 
     def test_policy_gradient_batch_keeps_equal_online_and_offline_size_when_xi_is_zero(self):
         online_state_batch = np.arange(12, dtype=np.float64).reshape(6, 2)

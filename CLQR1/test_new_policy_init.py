@@ -6,7 +6,9 @@ from unittest.mock import patch
 
 import torch
 
-from Fused_CPRO import PRCRL_main, _build_scene, _maybe_initialize_new_actor_from_checkpoint
+from Fused_CPRO import HRL_main, PRCRL_main, _build_scene, _maybe_initialize_new_actor_from_checkpoint
+from run_clqr_hrl import build_python_config as build_hrl_python_config
+from run_clqr_hrl import _resolve_new_policy_init_args as resolve_hrl_new_policy_init_args
 from run_clqr_prcrl import build_python_config as build_prcrl_python_config
 from run_clqr_prcrl import _resolve_new_policy_init_args as resolve_prcrl_new_policy_init_args
 
@@ -110,6 +112,7 @@ class NewPolicyInitCheckpointTest(unittest.TestCase):
 
     def test_prcrl_resolve_new_policy_init_args_parses_single_bq_pair(self):
         args = SimpleNamespace(
+            load_new_actor=True,
             new_policy_init=(100, 10),
             new_policy_seed=7,
             new_policy_pretrain_episode=50,
@@ -120,6 +123,49 @@ class NewPolicyInitCheckpointTest(unittest.TestCase):
         self.assertEqual(args.new_policy_seed, 7)
         self.assertEqual(args.new_policy_pretrain_episode, 50)
         self.assertEqual(args.new_policy_checkpoint_root, "tmp/checkpoints")
+
+    def test_prcrl_resolve_new_policy_init_args_skips_run_tag_when_load_disabled(self):
+        args = SimpleNamespace(
+            load_new_actor=False,
+            new_policy_init=(100, 10),
+            new_policy_seed=7,
+            new_policy_pretrain_episode=50,
+            new_policy_checkpoint_root="tmp/checkpoints",
+        )
+        args = resolve_prcrl_new_policy_init_args(args)
+        self.assertEqual(args.new_policy_run_tag, "")
+
+    def test_hrl_run_exposes_new_policy_init_config_fields(self):
+        config = build_hrl_python_config()
+        self.assertIn("new_policy_init", config)
+        self.assertIn("new_policy_seed", config)
+        self.assertIn("new_policy_pretrain_episode", config)
+        self.assertIn("new_policy_checkpoint_root", config)
+
+    def test_hrl_resolve_new_policy_init_args_parses_single_bq_pair(self):
+        args = SimpleNamespace(
+            load_new_actor=True,
+            new_policy_init=(100, 10),
+            new_policy_seed=7,
+            new_policy_pretrain_episode=50,
+            new_policy_checkpoint_root="tmp/checkpoints",
+        )
+        args = resolve_hrl_new_policy_init_args(args)
+        self.assertEqual(args.new_policy_run_tag, "b100_q10")
+        self.assertEqual(args.new_policy_seed, 7)
+        self.assertEqual(args.new_policy_pretrain_episode, 50)
+        self.assertEqual(args.new_policy_checkpoint_root, "tmp/checkpoints")
+
+    def test_hrl_resolve_new_policy_init_args_skips_run_tag_when_load_disabled(self):
+        args = SimpleNamespace(
+            load_new_actor=False,
+            new_policy_init=(100, 10),
+            new_policy_seed=7,
+            new_policy_pretrain_episode=50,
+            new_policy_checkpoint_root="tmp/checkpoints",
+        )
+        args = resolve_hrl_new_policy_init_args(args)
+        self.assertEqual(args.new_policy_run_tag, "")
 
     def test_prcrl_main_calls_new_actor_init_before_old_policy_library(self):
         _, actor, state_dim, action_dim, constraint_dim, constr_lim = _build_scene("CLQR", 0, "cpu", 1)
@@ -160,6 +206,53 @@ class NewPolicyInitCheckpointTest(unittest.TestCase):
                 with patch("Fused_CPRO._build_old_policy_library", side_effect=_fake_old_policy_library):
                     with self.assertRaisesRegex(RuntimeError, "stop-after-init"):
                         PRCRL_main(args, "CLQR")
+
+        self.assertEqual(call_order, ["init", "old"])
+
+    def test_hrl_main_calls_new_actor_init_before_old_policy_library(self):
+        _, actor, state_dim, action_dim, constraint_dim, constr_lim = _build_scene("CLQR", 0, "cpu", 1)
+        fake_env = SimpleNamespace(reset=lambda: None)
+        args = SimpleNamespace(
+            seed=0,
+            device="cpu",
+            T=1,
+            grad_T=1,
+            num_new_data=1,
+            update_time_per_episode=1,
+            MAX_STEPS=2,
+            alpha_pow=0.6,
+            beta_pow=0.8,
+            beta_actor_pow=0.8,
+            beta_rho_pow=0.9,
+            eta_pow=0.01,
+            gamma_pow_reward=0.3,
+            gamma_pow_cost=0.3,
+            tau_reward=6.0,
+            tau_cost=10.0,
+            Q_update_time=1,
+            window=8,
+            load_new_actor=True,
+            new_policy_run_tag="b100_q10",
+            new_policy_pretrain_episode=50,
+            new_policy_seed=7,
+            new_policy_checkpoint_root="tmp/checkpoints",
+            old_policy_run_tags="",
+        )
+        call_order = []
+
+        def _fake_new_init(*_args, **_kwargs):
+            call_order.append("init")
+            return actor
+
+        def _fake_old_policy_library(*_args, **_kwargs):
+            call_order.append("old")
+            raise RuntimeError("stop-after-init")
+
+        with patch("Fused_CPRO._build_scene", return_value=(fake_env, actor, state_dim, action_dim, constraint_dim, constr_lim)):
+            with patch("Fused_CPRO._maybe_initialize_new_actor_from_checkpoint", side_effect=_fake_new_init):
+                with patch("Fused_CPRO._build_old_policy_library", side_effect=_fake_old_policy_library):
+                    with self.assertRaisesRegex(RuntimeError, "stop-after-init"):
+                        HRL_main(args, "CLQR", return_aux=True)
 
         self.assertEqual(call_order, ["init", "old"])
 

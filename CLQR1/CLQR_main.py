@@ -136,6 +136,10 @@ REUSE_LEGEND_NCOL = 3
 COMPARE_HEADER_RECT = (0.0, 0.0, 1.0, 0.78)
 REUSE_HEADER_RECT = (0.0, 0.0, 1.0, 0.88)
 REUSE_PANEL_HEIGHT = 2.6
+# objective 图 y 轴范围：忽略显著过高的算法，展开主流算法的下方趋势。
+OBJECTIVE_YLIM_IGNORE_LABELS = {"PPO"}
+OBJECTIVE_YLIM_PAD_RATIO = 0.08
+OBJECTIVE_YLIM_MIN_PAD = 0.8
 
 REUSE_COLORS = {
     "New policy": "#000000",
@@ -338,6 +342,26 @@ def _style_axis(ax):
         spine.set_linewidth(0.9)
 
 
+def _resolve_objective_ylim(curves):
+    target_curves = [
+        (series_config, values)
+        for series_config, values in curves
+        if _series_label(series_config) not in OBJECTIVE_YLIM_IGNORE_LABELS
+    ]
+    if not target_curves:
+        target_curves = list(curves)
+
+    common_length = _resolve_shortest_curve_length(target_curves)
+    stacked = np.concatenate(
+        [np.asarray(values[:common_length], dtype=np.float64).reshape(-1) for _, values in target_curves]
+    )
+    y_min = float(np.min(stacked))
+    y_max = float(np.max(stacked))
+    span = max(y_max - y_min, 1e-6)
+    pad = max(span * OBJECTIVE_YLIM_PAD_RATIO, OBJECTIVE_YLIM_MIN_PAD)
+    return y_min - pad, y_max + pad
+
+
 def _apply_compare_header(fig, handles, labels, title_text, legend_ncol, layout_rect):
     fig.suptitle(title_text, y=0.985)
     fig.legend(
@@ -399,6 +423,7 @@ def _plot_objective(curves):
     ax.set_xlabel("Episode")
     ax.set_ylabel(OBJECTIVE_LABEL)
     ax.set_xlim(1, max_episode)
+    ax.set_ylim(*_resolve_objective_ylim(curves))
     _style_axis(ax)
     handles, labels = ax.get_legend_handles_labels()
     _apply_compare_header(fig, handles, labels, "CLQR", COMPARE_LEGEND_NCOL, COMPARE_HEADER_RECT)

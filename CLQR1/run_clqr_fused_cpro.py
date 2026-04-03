@@ -53,7 +53,7 @@ ALGORITHM_NAME = "Fused_CPRO"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # old policy 选择：默认显式指定 SLDAC checkpoint，口径与 MIMO1 保持一致。
-DEFAULT_OLD_POLICY_SEED = 5
+DEFAULT_OLD_POLICY_SEED = 17
 DEFAULT_OLD_POLICY_CHECKPOINT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints", "SLDAC")
 OLD_POLICY_BQ_LIST = [(100, 5)]
 OLD_POLICY_PRETRAIN_EPISODE = 100
@@ -63,7 +63,7 @@ NEW_POLICY_INIT_BQ = (100, 5)
 NEW_POLICY_INIT_SEED = 5
 NEW_POLICY_INIT_PRETRAIN_EPISODE = 100
 NEW_POLICY_INIT_CHECKPOINT_ROOT = OLD_POLICY_CHECKPOINT_ROOT
-LOAD_NEW_ACTOR = True
+LOAD_NEW_ACTOR = False
 
 
 # 该入口以 .py 顶部配置为唯一配置源，CLI 仅保留帮助与兼容提示。

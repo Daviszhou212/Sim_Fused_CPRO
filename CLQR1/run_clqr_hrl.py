@@ -20,7 +20,6 @@ from Fused_CPRO import HRL_main, _resolve_sldac_checkpoint_path
 from run_clqr_sldac import _migrate_legacy_checkpoints
 
 
-# 固定 CLQR1 HRL 入口：与 CLQR Fused-CPRO 保持同一组默认超参数，仅去掉离线数据分支。
 HRL_RUNS = [
     ("default", "HRL, no offline data", 250, 250, 100, 5),
 ]
@@ -39,19 +38,27 @@ DEFAULT_GAMMA_POW_REWARD = 0.27
 DEFAULT_GAMMA_POW_COST = 0.27
 DEFAULT_TAU_REWARD = 10.0
 DEFAULT_TAU_COST = 10.0
+DEFAULT_RHO_MIN_NEW_ACTOR = 1e-4
+DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
 DEFAULT_DEVICE = "cpu"
-DEFAULT_OLD_POLICY_SEED = 1
-DEFAULT_OLD_POLICY_CHECKPOINT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints", "SLDAC")
+
 
 EXAMPLE_NAME = "CLQR"
 ALGORITHM_NAME = "HRL"
+DEFAULT_OLD_POLICY_SEED = 17
+DEFAULT_OLD_POLICY_CHECKPOINT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints", "SLDAC")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OLD_POLICY_BQ_LIST = [(100, 5)]
+OLD_POLICY_BQ_LIST = [(100, 1)]
 OLD_POLICY_PRETRAIN_EPISODE = 10
 OLD_POLICY_CHECKPOINT_ROOT = DEFAULT_OLD_POLICY_CHECKPOINT_ROOT
 
+NEW_POLICY_INIT_BQ = (100, 1)
+NEW_POLICY_INIT_SEED = 17
+NEW_POLICY_INIT_PRETRAIN_EPISODE = 10
+NEW_POLICY_INIT_CHECKPOINT_ROOT = OLD_POLICY_CHECKPOINT_ROOT
+LOAD_NEW_ACTOR = True
 
-# 该入口以 .py 顶部配置为唯一配置源，CLI 仅保留帮助与兼容提示。
+
 def build_python_config():
     return {
         "seed": int(DEFAULT_SEED),
@@ -69,11 +76,18 @@ def build_python_config():
         "gamma_pow_cost": float(DEFAULT_GAMMA_POW_COST),
         "tau_reward": float(DEFAULT_TAU_REWARD),
         "tau_cost": float(DEFAULT_TAU_COST),
+        "rho_min_new_actor": float(DEFAULT_RHO_MIN_NEW_ACTOR),
+        "rho_min_old_policy": float(DEFAULT_RHO_MIN_OLD_POLICY),
         "device": str(DEFAULT_DEVICE),
         "old_policies": None,
         "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
         "old_policy_pretrain_episode": int(OLD_POLICY_PRETRAIN_EPISODE),
         "old_policy_checkpoint_root": str(OLD_POLICY_CHECKPOINT_ROOT),
+        "load_new_actor": bool(LOAD_NEW_ACTOR),
+        "new_policy_init": NEW_POLICY_INIT_BQ,
+        "new_policy_seed": int(NEW_POLICY_INIT_SEED),
+        "new_policy_pretrain_episode": int(NEW_POLICY_INIT_PRETRAIN_EPISODE),
+        "new_policy_checkpoint_root": str(NEW_POLICY_INIT_CHECKPOINT_ROOT),
     }
 
 
@@ -104,6 +118,22 @@ def _parse_positive_int(value, field_name, source_text):
             "invalid {0} in old policy spec {1!r}: expected a positive integer.".format(field_name, source_text)
         )
     return parsed
+
+
+def _parse_bool_flag(value, field_name):
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "y", "on"):
+        return True
+    if text in ("0", "false", "no", "n", "off"):
+        return False
+    raise ValueError(
+        "invalid {0} value {1!r}. expected one of: true/false, yes/no, 1/0, on/off.".format(
+            field_name,
+            value,
+        )
+    )
 
 
 def _format_old_policy_run_tag(batch_size, q_update_time):
@@ -154,13 +184,29 @@ def _normalize_old_policy_bq_list(bq_list):
     run_tags = []
     for item in bq_list:
         if not isinstance(item, (list, tuple)) or len(item) != 2:
-            raise ValueError(
-                "OLD_POLICY_BQ_LIST item must be a (b, q) pair. got {0!r}".format(item)
-            )
+            raise ValueError("OLD_POLICY_BQ_LIST item must be a (b, q) pair. got {0!r}".format(item))
         batch_size = _parse_positive_int(item[0], "b", item)
         q_update_time = _parse_positive_int(item[1], "q", item)
         run_tags.append(_format_old_policy_run_tag(batch_size, q_update_time))
     return _dedupe_run_tags(run_tags)
+
+
+def _normalize_new_policy_init_spec(init_spec):
+    if init_spec is None:
+        return ""
+    if isinstance(init_spec, str):
+        run_tags = _parse_old_policy_cli(init_spec)
+    elif isinstance(init_spec, (list, tuple)) and len(init_spec) == 2 and (not isinstance(init_spec[0], (list, tuple))):
+        run_tags = _normalize_old_policy_bq_list([init_spec])
+    else:
+        raise ValueError(
+            "NEW_POLICY_INIT_BQ must be None, a (b, q) pair, or a string like 'b100:q10'. got {0!r}".format(
+                init_spec
+            )
+        )
+    if len(run_tags) > 1:
+        raise ValueError("new policy init expects a single (b, q) pair. got {0}".format(", ".join(run_tags)))
+    return "" if not run_tags else str(run_tags[0])
 
 
 def _resolve_old_policy_args(args):
@@ -192,6 +238,39 @@ def _resolve_old_policy_args(args):
     return args
 
 
+def _resolve_new_policy_init_args(args):
+    args.load_new_actor = _parse_bool_flag(getattr(args, "load_new_actor", LOAD_NEW_ACTOR), "load_new_actor")
+    args.new_policy_seed = int(getattr(args, "new_policy_seed", DEFAULT_SEED))
+
+    if getattr(args, "new_policy_pretrain_episode", None) is None:
+        pretrain_episode = int(NEW_POLICY_INIT_PRETRAIN_EPISODE)
+    else:
+        pretrain_episode = int(args.new_policy_pretrain_episode)
+
+    checkpoint_root = getattr(args, "new_policy_checkpoint_root", None) or NEW_POLICY_INIT_CHECKPOINT_ROOT
+
+    args.new_policy_run_tag = ""
+    args.new_policy_pretrain_episode = pretrain_episode
+    args.new_policy_checkpoint_root = checkpoint_root
+
+    if not args.load_new_actor:
+        return args
+
+    init_spec = getattr(args, "new_policy_init", NEW_POLICY_INIT_BQ)
+    run_tag = _normalize_new_policy_init_spec(init_spec)
+    args.new_policy_run_tag = run_tag
+
+    if run_tag and (pretrain_episode <= 0):
+        raise ValueError(
+            "new policy pretrain_episode must be a positive integer when new actor init is configured. got {0}".format(
+                pretrain_episode
+            )
+        )
+    if not run_tag:
+        raise ValueError("new actor init is enabled but new_policy_init is empty.")
+    return args
+
+
 def _validate_old_policy_checkpoints(args):
     run_tags = [tag.strip() for tag in str(getattr(args, "old_policy_run_tags", "")).split(",") if tag.strip()]
     if not run_tags:
@@ -212,7 +291,35 @@ def _validate_old_policy_checkpoints(args):
     return args
 
 
+def _validate_new_policy_checkpoint(args):
+    if not bool(getattr(args, "load_new_actor", LOAD_NEW_ACTOR)):
+        return args
+
+    run_tag = str(getattr(args, "new_policy_run_tag", "")).strip()
+    if not run_tag:
+        return args
+
+    checkpoint_path = _resolve_sldac_checkpoint_path(
+        args,
+        EXAMPLE_NAME,
+        run_tag,
+        int(args.new_policy_pretrain_episode),
+        int(args.new_policy_seed),
+        checkpoint_root=args.new_policy_checkpoint_root,
+    )
+    print("selected new policy init run_tag:", run_tag)
+    print("selected new policy init seed:", int(args.new_policy_seed))
+    print("selected new policy init pretrain_episode:", int(args.new_policy_pretrain_episode))
+    print("verified new policy init checkpoint:", run_tag, "->", checkpoint_path)
+    return args
+
+
 def _finalize_actor_rho_args(args):
+    if getattr(args, "load_new_actor", None) is None:
+        args.load_new_actor = bool(LOAD_NEW_ACTOR)
+    else:
+        args.load_new_actor = _parse_bool_flag(args.load_new_actor, "load_new_actor")
+
     if getattr(args, "beta_actor_pow", None) is None:
         args.beta_actor_pow = float(getattr(args, "beta_pow", DEFAULT_BETA_POW))
     else:
@@ -222,6 +329,28 @@ def _finalize_actor_rho_args(args):
         args.beta_rho_pow = float(DEFAULT_BETA_RHO_POW)
     else:
         args.beta_rho_pow = float(args.beta_rho_pow)
+    return args
+
+
+def _finalize_rho_lower_bounds(args):
+    args.rho_min_new_actor = float(getattr(args, "rho_min_new_actor", DEFAULT_RHO_MIN_NEW_ACTOR))
+    args.rho_min_old_policy = float(getattr(args, "rho_min_old_policy", DEFAULT_RHO_MIN_OLD_POLICY))
+    if args.rho_min_new_actor < 0.0:
+        raise ValueError("rho_min_new_actor must be non-negative. got {0}".format(args.rho_min_new_actor))
+    if args.rho_min_old_policy < 0.0:
+        raise ValueError("rho_min_old_policy must be non-negative. got {0}".format(args.rho_min_old_policy))
+    run_tags = [tag.strip() for tag in str(getattr(args, "old_policy_run_tags", "")).split(",") if tag.strip()]
+    rho_dim = 2 + len(run_tags)
+    rho_floor_sum = float(args.rho_min_new_actor) + float(max(rho_dim - 1, 0)) * float(args.rho_min_old_policy)
+    if rho_floor_sum > 1.0:
+        raise ValueError(
+            "rho lower bounds are infeasible for rho_dim={0}. got rho_min_new_actor={1}, rho_min_old_policy={2}, sum={3}".format(
+                rho_dim,
+                args.rho_min_new_actor,
+                args.rho_min_old_policy,
+                rho_floor_sum,
+            )
+        )
     return args
 
 
@@ -327,11 +456,18 @@ def build_parser():
     parser.add_argument("--gamma_pow_cost", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--tau_reward", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--tau_cost", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--rho-min-new-actor", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--rho-min-old-policy", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--old-policies", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-seed", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-checkpoint-root", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--load-new-actor", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--new-policy-init", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--new-policy-seed", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--new-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--new-policy-checkpoint-root", type=str, default=argparse.SUPPRESS)
     return parser
 
 
@@ -393,12 +529,15 @@ def main():
         print(ignored_message)
     args = _finalize_actor_rho_args(args)
     args = _resolve_old_policy_args(args)
+    args = _resolve_new_policy_init_args(args)
+    args = _finalize_rho_lower_bounds(args)
     _migrate_legacy_checkpoints(
-        args.checkpoint_root,
+        args.old_policy_checkpoint_root,
         EXAMPLE_NAME,
         default_seed=int(args.old_policy_seed),
     )
     args = _validate_old_policy_checkpoints(args)
+    args = _validate_new_policy_checkpoint(args)
     experiment_seeds = resolve_experiment_seeds(args, DEFAULT_SEED)
     print("experiment seeds:", ", ".join(str(seed_value) for seed_value in experiment_seeds))
     for seed_value in experiment_seeds:
