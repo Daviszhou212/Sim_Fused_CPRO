@@ -1027,19 +1027,31 @@ def _load_sldac_actor_checkpoint(
     actor_log_std = model.get("actor_log_std")
     if actor_state_dict is None:
         raise KeyError("checkpoint model.actor_state_dict is missing.")
-    if actor_log_std is None:
-        raise KeyError("checkpoint model.actor_log_std is missing.")
-
-    actor_log_std_torch = torch.as_tensor(actor_log_std, dtype=torch.float, device=device).detach().clone().view(-1)
-    if int(actor_log_std_torch.numel()) != int(action_dim):
-        raise ValueError(
-            "checkpoint actor_log_std size mismatch: expected {0}, got {1}".format(
-                int(action_dim),
-                int(actor_log_std_torch.numel()),
+    actor_log_std_torch = None
+    if actor_log_std is not None:
+        actor_log_std_torch = torch.as_tensor(actor_log_std, dtype=torch.float, device=device).detach().clone().view(-1)
+        if int(actor_log_std_torch.numel()) != int(action_dim):
+            raise ValueError(
+                "checkpoint actor_log_std size mismatch: expected {0}, got {1}".format(
+                    int(action_dim),
+                    int(actor_log_std_torch.numel()),
+                )
             )
-        )
 
     return checkpoint_path, actor_state_dict, actor_log_std_torch
+
+
+def _restore_actor_from_checkpoint(actor, actor_state_dict, actor_log_std, load_log_std, checkpoint_path, context_label):
+    actor.net.load_state_dict(actor_state_dict)
+    if bool(load_log_std):
+        if actor_log_std is None:
+            raise KeyError("checkpoint model.actor_log_std is missing for {0}.".format(context_label))
+        actor.log_std = actor_log_std.detach().clone().to(actor.device)
+        print("{0} mu/log_std from checkpoint:".format(context_label), checkpoint_path)
+        return actor
+
+    print("{0} mu from checkpoint and keep default log_std:".format(context_label), checkpoint_path)
+    return actor
 
 
 def _load_old_policy_from_checkpoint(
@@ -1053,6 +1065,7 @@ def _load_old_policy_from_checkpoint(
     state_dim,
     action_dim,
     constraint_dim,
+    checkpoint_root=None,
 ):
     checkpoint_path, actor_state_dict, actor_log_std = _load_sldac_actor_checkpoint(
         args,
@@ -1064,16 +1077,21 @@ def _load_old_policy_from_checkpoint(
         state_dim,
         action_dim,
         constraint_dim,
+        checkpoint_root=checkpoint_root,
     )
 
     if _is_mimo(example_name):
         actor = GaussianPolicy_MIMO(int(state_dim), int(action_dim), device, int(policy_batch_size))
     else:
         actor = GaussianPolicy_CLQR(int(state_dim), int(action_dim), device, int(policy_batch_size))
-    actor.net.load_state_dict(actor_state_dict)
-    actor.log_std = actor_log_std
-
-    print("load old policy checkpoint:", checkpoint_path)
+    actor = _restore_actor_from_checkpoint(
+        actor,
+        actor_state_dict,
+        actor_log_std,
+        getattr(args, "load_old_policy_log_std", False),
+        checkpoint_path,
+        "load old policy",
+    )
     return FrozenActorPolicy(actor)
 
 
@@ -1088,7 +1106,7 @@ def _maybe_initialize_new_actor_from_checkpoint(args, example_name, actor, state
         print("initialize new actor from default random initialization.")
         return actor
 
-    checkpoint_path, actor_state_dict, _ = _load_sldac_actor_checkpoint(
+    checkpoint_path, actor_state_dict, actor_log_std = _load_sldac_actor_checkpoint(
         args,
         example_name,
         run_tag,
@@ -1100,9 +1118,14 @@ def _maybe_initialize_new_actor_from_checkpoint(args, example_name, actor, state
         constraint_dim,
         checkpoint_root=getattr(args, "new_policy_checkpoint_root", None),
     )
-    actor.net.load_state_dict(actor_state_dict)
-    print("initialize new actor mu from checkpoint and keep default log_std:", checkpoint_path)
-    return actor
+    return _restore_actor_from_checkpoint(
+        actor,
+        actor_state_dict,
+        actor_log_std,
+        getattr(args, "load_new_actor_log_std", False),
+        checkpoint_path,
+        "initialize new actor",
+    )
 
 
 def _train_sldac_like_actor(args, example_name, seed):

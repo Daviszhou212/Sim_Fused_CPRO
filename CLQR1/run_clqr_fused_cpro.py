@@ -58,12 +58,14 @@ DEFAULT_OLD_POLICY_CHECKPOINT_ROOT = os.path.join(os.path.dirname(os.path.abspat
 OLD_POLICY_BQ_LIST = [(100, 5)]
 OLD_POLICY_PRETRAIN_EPISODE = 100
 OLD_POLICY_CHECKPOINT_ROOT = DEFAULT_OLD_POLICY_CHECKPOINT_ROOT
+LOAD_OLD_POLICY_LOG_STD = False
 
 NEW_POLICY_INIT_BQ = (100, 5)
 NEW_POLICY_INIT_SEED = 5
 NEW_POLICY_INIT_PRETRAIN_EPISODE = 100
 NEW_POLICY_INIT_CHECKPOINT_ROOT = OLD_POLICY_CHECKPOINT_ROOT
 LOAD_NEW_ACTOR = False
+LOAD_NEW_ACTOR_LOG_STD = False
 
 
 # 该入口以 .py 顶部配置为唯一配置源，CLI 仅保留帮助与兼容提示。
@@ -93,11 +95,13 @@ def build_python_config():
         "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
         "old_policy_pretrain_episode": int(OLD_POLICY_PRETRAIN_EPISODE),
         "old_policy_checkpoint_root": str(OLD_POLICY_CHECKPOINT_ROOT),
+        "load_old_policy_log_std": bool(LOAD_OLD_POLICY_LOG_STD),
         "load_new_actor": bool(LOAD_NEW_ACTOR),
         "new_policy_init": NEW_POLICY_INIT_BQ,
         "new_policy_seed": int(NEW_POLICY_INIT_SEED),
         "new_policy_pretrain_episode": int(NEW_POLICY_INIT_PRETRAIN_EPISODE),
         "new_policy_checkpoint_root": str(NEW_POLICY_INIT_CHECKPOINT_ROOT),
+        "load_new_actor_log_std": bool(LOAD_NEW_ACTOR_LOG_STD),
     }
 
 
@@ -207,8 +211,24 @@ def _normalize_new_policy_init_spec(init_spec):
     return "" if not run_tags else str(run_tags[0])
 
 
+def _coerce_bool(value, field_name):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in ("1", "true", "yes", "on"):
+            return True
+        if text in ("0", "false", "no", "off"):
+            return False
+    raise ValueError("{0} must be a bool or a bool-like string. got {1!r}".format(field_name, value))
+
+
 def _resolve_old_policy_args(args):
     args.old_policy_seed = int(getattr(args, "old_policy_seed", DEFAULT_OLD_POLICY_SEED))
+    args.load_old_policy_log_std = _coerce_bool(
+        getattr(args, "load_old_policy_log_std", LOAD_OLD_POLICY_LOG_STD),
+        "load_old_policy_log_std",
+    )
     if getattr(args, "old_policies", None) is None:
         run_tags = _normalize_old_policy_bq_list(OLD_POLICY_BQ_LIST)
     else:
@@ -238,7 +258,11 @@ def _resolve_old_policy_args(args):
 
 
 def _resolve_new_policy_init_args(args):
-    args.load_new_actor = bool(getattr(args, "load_new_actor", LOAD_NEW_ACTOR))
+    args.load_new_actor = _coerce_bool(getattr(args, "load_new_actor", LOAD_NEW_ACTOR), "load_new_actor")
+    args.load_new_actor_log_std = _coerce_bool(
+        getattr(args, "load_new_actor_log_std", LOAD_NEW_ACTOR_LOG_STD),
+        "load_new_actor_log_std",
+    )
     args.new_policy_seed = int(getattr(args, "new_policy_seed", DEFAULT_SEED))
 
     if getattr(args, "new_policy_pretrain_episode", None) is None:
@@ -279,6 +303,7 @@ def _validate_old_policy_checkpoints(args):
     print("selected old policy run_tags:", ", ".join(run_tags))
     print("selected old policy seed:", int(args.old_policy_seed))
     print("selected old policy pretrain_episode:", int(args.old_policy_pretrain_episode))
+    print("selected old policy load_log_std:", bool(args.load_old_policy_log_std))
     for run_tag in run_tags:
         checkpoint_path = _resolve_sldac_checkpoint_path(
             args,
@@ -310,6 +335,7 @@ def _validate_new_policy_checkpoint(args):
     print("selected new policy init run_tag:", run_tag)
     print("selected new policy init seed:", int(args.new_policy_seed))
     print("selected new policy init pretrain_episode:", int(args.new_policy_pretrain_episode))
+    print("selected new policy init load_log_std:", bool(args.load_new_actor_log_std))
     print("verified new policy init checkpoint:", run_tag, "->", checkpoint_path)
     return args
 
