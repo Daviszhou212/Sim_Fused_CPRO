@@ -42,8 +42,7 @@ DEFAULT_ALPHA_POW = 0.6
 DEFAULT_BETA_ACTOR_POW = 0.7
 DEFAULT_BETA_RHO_POW = 0.1
 # xi0 表示 offline 分支权重；0.5 表示 online/offline 两个分支各占一半。
-DEFAULT_XI0 = 0
-DEFAULT_XI0 = 1
+DEFAULT_XI0 = 0.5
 # xi_pow 表示 xi 的幂次衰减系数，值越大代表离线权重下降越快。
 DEFAULT_XI_POW = 0.9
 DEFAULT_ETA_POW = 0.01
