@@ -33,7 +33,7 @@ FUSED_CPRO_RUNS = [
 # 本地默认超参数。
 DEFAULT_SEED = 0
 DEFAULT_SEEDS = (DEFAULT_SEED,)
-DEFAULT_OLD_POLICY_SEED = 1
+
 DEFAULT_WINDOW = 10000
 DEFAULT_EPISODE = 100
 DEFAULT_UPDATE_TIME_PER_EPISODE = 10
@@ -42,25 +42,26 @@ DEFAULT_ALPHA_POW = 0.6
 DEFAULT_BETA_ACTOR_POW = 0.7
 DEFAULT_BETA_RHO_POW = 0.1
 # xi0 表示 offline 分支权重；0.5 表示 online/offline 两个分支各占一半。
-DEFAULT_XI0 = 1
+DEFAULT_XI0 = 0.5
 # xi_pow 表示 xi 的幂次衰减系数，值越大代表离线权重下降越快。
-DEFAULT_XI_POW = 0.9
+DEFAULT_XI_POW = 0.9999
 DEFAULT_ETA_POW = 0.01
 DEFAULT_GAMMA_POW_REWARD = 0.3
 DEFAULT_GAMMA_POW_COST = 0.3
 DEFAULT_TAU_REWARD = 1.0
 DEFAULT_TAU_COST = 1.0
-DEFAULT_RHO_MIN_NEW_ACTOR = 1e-4
+DEFAULT_RHO_MIN_NEW_ACTOR = 0.2
 DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
+DEFAULT_FREEZE_RHO_EPISODE_COUNT = 0
 
 # old policy 选择：显式指定 SLDAC checkpoint，不参与任何参数同步。
+DEFAULT_OLD_POLICY_SEED = 3
 OLD_POLICY_BQ_LIST = [(100, 1)]
-# OLD_POLICY_PRETRAIN_EPISODE = 40
-OLD_POLICY_PRETRAIN_EPISODE = 40
+OLD_POLICY_PRETRAIN_EPISODE = 50
 OLD_POLICY_CHECKPOINT_ROOT = os.path.join(BASE_DIR, "checkpoints", "SLDAC")
 NEW_POLICY_INIT_BQ = (100, 1)
-NEW_POLICY_INIT_SEED = 1
-NEW_POLICY_INIT_PRETRAIN_EPISODE = 10
+NEW_POLICY_INIT_SEED = 3
+NEW_POLICY_INIT_PRETRAIN_EPISODE = 20
 NEW_POLICY_INIT_CHECKPOINT_ROOT = OLD_POLICY_CHECKPOINT_ROOT
 LOAD_NEW_ACTOR = True
 
@@ -86,6 +87,7 @@ def build_python_config():
         "tau_cost": float(DEFAULT_TAU_COST),
         "rho_min_new_actor": float(DEFAULT_RHO_MIN_NEW_ACTOR),
         "rho_min_old_policy": float(DEFAULT_RHO_MIN_OLD_POLICY),
+        "freeze_rho_episode_count": int(DEFAULT_FREEZE_RHO_EPISODE_COUNT),
         "device": str(DEVICE),
         "old_policies": None,
         "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
@@ -367,6 +369,19 @@ def _finalize_rho_lower_bounds(args):
     return args
 
 
+def _finalize_freeze_rho_args(args):
+    args.freeze_rho_episode_count = int(
+        getattr(args, "freeze_rho_episode_count", DEFAULT_FREEZE_RHO_EPISODE_COUNT)
+    )
+    if args.freeze_rho_episode_count < 0:
+        raise ValueError(
+            "freeze_rho_episode_count must be a non-negative integer. got {0}".format(
+                args.freeze_rho_episode_count
+            )
+        )
+    return args
+
+
 def _apply_run_config(args, output_suffix, message, t_horizon, grad_t, num_new_data_run, q_update_time):
     print(message)
     args.run_tag = output_suffix
@@ -472,6 +487,7 @@ def build_parser():
     parser.add_argument("--tau_cost", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-min-new-actor", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-min-old-policy", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--freeze-rho-episode-count", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--old-policies", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-seed", type=int, default=argparse.SUPPRESS)
@@ -566,6 +582,7 @@ def main():
     args = _resolve_old_policy_args(args)
     args = _resolve_new_policy_init_args(args)
     args = _finalize_rho_lower_bounds(args)
+    args = _finalize_freeze_rho_args(args)
     _migrate_legacy_checkpoints(args.checkpoint_root, EXAMPLE_NAME, default_seed=DEFAULT_OLD_POLICY_SEED)
     args = _validate_old_policy_checkpoints(args)
     args = _validate_new_policy_checkpoint(args)

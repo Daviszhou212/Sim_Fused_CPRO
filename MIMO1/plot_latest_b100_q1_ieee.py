@@ -432,8 +432,22 @@ def _apply_compare_header(fig, handles, labels, title_text, legend_ncol, layout_
 
 
 def _save_figure(fig, stem):
-    png_path = Path(build_compare_artifact_path(str(BASE_DIR), f"{stem}.png"))
-    pdf_path = Path(build_compare_artifact_path(str(BASE_DIR), f"{stem}.pdf"))
+    png_path = Path(
+        build_compare_artifact_path(
+            str(BASE_DIR),
+            f"{stem}.png",
+            seed=PREFERRED_SEED,
+            run_tag=RUN_TAG,
+        )
+    )
+    pdf_path = Path(
+        build_compare_artifact_path(
+            str(BASE_DIR),
+            f"{stem}.pdf",
+            seed=PREFERRED_SEED,
+            run_tag=RUN_TAG,
+        )
+    )
     fig.savefig(png_path, bbox_inches="tight", facecolor="white")
     fig.savefig(pdf_path, bbox_inches="tight", facecolor="white")
     plt.close(fig)

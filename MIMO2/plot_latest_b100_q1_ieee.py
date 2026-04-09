@@ -15,7 +15,7 @@ from artifact_paths import build_compare_artifact_path, resolve_algorithm_artifa
 BASE_DIR = Path(__file__).resolve().parent
 
 # 绘图结果配置：脚本固定服务于 b100_q1，对外只暴露顶部配置区。
-RUN_TAG = "b100_q1"
+RUN_TAG = "b100_q5"
 PREFERRED_SEED = 0
 OUTPUT_PREFIX = f"MIMO_seed{PREFERRED_SEED}_algorithms_compare_{RUN_TAG}"
 
@@ -25,9 +25,11 @@ OBJECTIVE_LABEL = "Objective cost (avg. total transmit power)"
 COST_LABEL = "Constraint cost (avg. user delay backlog)"
 REUSE_LABEL = "Policy reuse probability"
 
-# MIMO 特有展示配置：仅允许 HRL / PRCRL objective 曲线使用可视化偏移，图例中不显示偏移文本。
+# MIMO 特有展示配置：仅允许 HRL / PRCRL 的 objective / cost 曲线使用可视化偏移，图例中不显示偏移文本。
 HRL_OBJECTIVE_OFFSET = 0.3
 PRCRL_OBJECTIVE_OFFSET = 0.3
+HRL_COST_OFFSET = 0.3
+PRCRL_COST_OFFSET = 0.05
 
 # 平滑显示配置：仅影响绘图展示，不修改原始 mat 数据；窗口越大，曲线越平滑。
 FUSED_CPRO_SMOOTH_ENABLE = False
@@ -75,6 +77,7 @@ PLOT_SERIES = [
     #     "marker": "P",
     #     "prefer_seed_suffix": True,
     #     "objective_offset": HRL_OBJECTIVE_OFFSET,
+    #     "cost_offset": HRL_COST_OFFSET,
     #     "smooth_enable": HRL_SMOOTH_ENABLE,
     #     "smooth_window": HRL_SMOOTH_WINDOW,
     # },
@@ -88,6 +91,7 @@ PLOT_SERIES = [
         "marker": "X",
         "prefer_seed_suffix": True,
         "objective_offset": PRCRL_OBJECTIVE_OFFSET,
+        "cost_offset": PRCRL_COST_OFFSET,
         "smooth_enable": PRCRL_SMOOTH_ENABLE,
         "smooth_window": PRCRL_SMOOTH_WINDOW,
     },
@@ -177,7 +181,7 @@ SERIES_REQUIRED_KEYS = (
     "marker",
     "prefer_seed_suffix",
 )
-SERIES_OPTIONAL_KEYS = ("rho_stem", "objective_offset", "smooth_enable", "smooth_window")
+SERIES_OPTIONAL_KEYS = ("rho_stem", "objective_offset", "cost_offset", "smooth_enable", "smooth_window")
 SEED_SUFFIX_PATTERN = re.compile(r"_seed\d+$")
 
 
@@ -353,6 +357,19 @@ def _validate_plot_series_config(plot_series):
                     "PLOT_SERIES[{0}] field objective_offset must be numeric.".format(idx)
                 ) from exc
 
+        cost_offset = series_config.get("cost_offset")
+        if cost_offset is not None:
+            if label not in ("HRL", "PRCRL"):
+                raise ValueError(
+                    "Only HRL or PRCRL series may define cost_offset. Invalid label: {0}".format(label)
+                )
+            try:
+                float(cost_offset)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    "PLOT_SERIES[{0}] field cost_offset must be numeric.".format(idx)
+                ) from exc
+
         smooth_enable = series_config.get("smooth_enable")
         if smooth_enable is not None and not isinstance(smooth_enable, bool):
             raise TypeError("PLOT_SERIES[{0}] field smooth_enable must be bool.".format(idx))
@@ -432,8 +449,22 @@ def _apply_compare_header(fig, handles, labels, title_text, legend_ncol, layout_
 
 
 def _save_figure(fig, stem):
-    png_path = Path(build_compare_artifact_path(str(BASE_DIR), f"{stem}.png"))
-    pdf_path = Path(build_compare_artifact_path(str(BASE_DIR), f"{stem}.pdf"))
+    png_path = Path(
+        build_compare_artifact_path(
+            str(BASE_DIR),
+            f"{stem}.png",
+            seed=PREFERRED_SEED,
+            run_tag=RUN_TAG,
+        )
+    )
+    pdf_path = Path(
+        build_compare_artifact_path(
+            str(BASE_DIR),
+            f"{stem}.pdf",
+            seed=PREFERRED_SEED,
+            run_tag=RUN_TAG,
+        )
+    )
     fig.savefig(png_path, bbox_inches="tight", facecolor="white")
     fig.savefig(pdf_path, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -459,6 +490,14 @@ def _truncate_plot_series(*series):
 def _objective_plot_values(series_config, values):
     values = np.asarray(values, dtype=np.float64)
     offset = float(series_config.get("objective_offset", 0.0))
+    if offset == 0.0:
+        return _maybe_smooth(series_config, values)
+    return _maybe_smooth(series_config, values + offset)
+
+
+def _cost_plot_values(series_config, values):
+    values = np.asarray(values, dtype=np.float64)
+    offset = float(series_config.get("cost_offset", 0.0))
     if offset == 0.0:
         return _maybe_smooth(series_config, values)
     return _maybe_smooth(series_config, values + offset)
@@ -498,7 +537,7 @@ def _plot_objective(curves):
 
 def _plot_cost(curves):
     fig, ax = plt.subplots(figsize=(FIG_WIDTH, FIG_HEIGHT))
-    max_episode = _plot_algorithm_curves(ax, curves)
+    max_episode = _plot_algorithm_curves(ax, curves, transform_fn=_cost_plot_values)
     ax.axhline(
         DELAY_LIMIT,
         color="#4D4D4D",

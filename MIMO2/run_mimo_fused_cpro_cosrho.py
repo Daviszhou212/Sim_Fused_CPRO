@@ -50,6 +50,7 @@ DEFAULT_TAU_REWARD = 5.0
 DEFAULT_TAU_COST = 1.0
 DEFAULT_RHO_MIN_NEW_ACTOR = 1e-4
 DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
+DEFAULT_FREEZE_RHO_EPISODE_COUNT = 0
 
 # CosRho 额外调度参数：控制 rho 的 cosine-restart-decay 更新。
 DEFAULT_XI_POW = DEFAULT_BETA_RHO_POW
@@ -90,6 +91,7 @@ def build_python_config():
         "tau_cost": float(DEFAULT_TAU_COST),
         "rho_min_new_actor": float(DEFAULT_RHO_MIN_NEW_ACTOR),
         "rho_min_old_policy": float(DEFAULT_RHO_MIN_OLD_POLICY),
+        "freeze_rho_episode_count": int(DEFAULT_FREEZE_RHO_EPISODE_COUNT),
         "device": str(DEVICE),
         "rho_scheduler": str(RHO_SCHEDULER),
         "rho_beta_peak_init": float(DEFAULT_RHO_BETA_PEAK_INIT),
@@ -364,6 +366,19 @@ def _finalize_rho_lower_bounds(args):
     return args
 
 
+def _finalize_freeze_rho_args(args):
+    args.freeze_rho_episode_count = int(
+        getattr(args, "freeze_rho_episode_count", DEFAULT_FREEZE_RHO_EPISODE_COUNT)
+    )
+    if args.freeze_rho_episode_count < 0:
+        raise ValueError(
+            "freeze_rho_episode_count must be a non-negative integer. got {0}".format(
+                args.freeze_rho_episode_count
+            )
+        )
+    return args
+
+
 def _build_artifact_name(kind, run_tag, suffix="mat"):
     return "{0}_{1}_{2}.{3}".format(ALGORITHM_NAME, str(kind), str(run_tag), str(suffix))
 
@@ -455,6 +470,7 @@ def build_parser():
     parser.add_argument("--tau_cost", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-min-new-actor", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-min-old-policy", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--freeze-rho-episode-count", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--rho-beta-peak-init", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-beta-peak-final-ratio", type=float, default=argparse.SUPPRESS)
@@ -595,6 +611,7 @@ def main():
     args = _resolve_old_policy_args(args)
     args = _resolve_new_policy_init_args(args)
     args = _finalize_rho_lower_bounds(args)
+    args = _finalize_freeze_rho_args(args)
     _migrate_legacy_checkpoints(
         args.old_policy_checkpoint_root,
         EXAMPLE_NAME,

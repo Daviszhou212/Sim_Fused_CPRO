@@ -25,17 +25,25 @@ def get_algorithm_output_dir(base_dir, algorithm_name, create=True):
     return _ensure_dir(output_dir, create)
 
 
-def get_compare_output_dir(base_dir, create=True):
+def _format_seed_dir(seed):
+    return "seed_{0}".format(int(seed))
+
+
+def get_compare_output_dir(base_dir, create=True, seed=None):
     compare_dir = os.path.join(get_outputs_root(base_dir, create=create), COMPARE_DIRNAME)
-    return _ensure_dir(compare_dir, create)
+    compare_dir = _ensure_dir(compare_dir, create)
+    if seed is None:
+        return compare_dir
+    seed_dir = os.path.join(compare_dir, _format_seed_dir(seed))
+    return _ensure_dir(seed_dir, create)
 
 
 def build_algorithm_artifact_path(base_dir, algorithm_name, filename, create=True):
     return os.path.join(get_algorithm_output_dir(base_dir, algorithm_name, create=create), str(filename))
 
 
-def build_compare_artifact_path(base_dir, filename, create=True):
-    return os.path.join(get_compare_output_dir(base_dir, create=create), str(filename))
+def build_compare_artifact_path(base_dir, filename, create=True, seed=None):
+    return os.path.join(get_compare_output_dir(base_dir, create=create, seed=seed), str(filename))
 
 
 def resolve_algorithm_artifact_path(base_dir, algorithm_name, filename):

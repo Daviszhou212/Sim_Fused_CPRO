@@ -3,6 +3,13 @@ import numpy as np
 import torch
 import shutil
 
+# CVXPY/MOSEK 求解配置：优先使用 MOSEK，失败后自动回退到其他可用求解器。
+SOLVER_PRIORITY = ("MOSEK", "OSQP", "ECOS", "SCS", "CLARABEL", "SCIPY")
+# 参考 CVXPY 官方 MOSEK 说明：连续问题会被 dualize，显式指定 dual form 更稳妥。
+DEFAULT_MOSEK_PARAMS = {
+	"MSK_IPAR_INTPNT_SOLVE_FORM": "MSK_SOLVE_DUAL",
+}
+
 def soft_update_twoloop(target, source, tau, Q_update_time, Q_update_index):
 	"""
 	Copies the parameters from source network (x) to target network (y) using the below update
@@ -42,6 +49,36 @@ def hard_update(target, source):
 			target_param.data.copy_(param.data)
 
 
+def _build_solver_candidates():
+	installed = set(cp.installed_solvers())
+	candidates = []
+	for solver_name in SOLVER_PRIORITY:
+		if (solver_name not in installed) or (not hasattr(cp, solver_name)):
+			continue
+		solver = getattr(cp, solver_name)
+		solver_kwargs = {"warm_start": True}
+		if solver_name == "MOSEK":
+			solver_kwargs["mosek_params"] = dict(DEFAULT_MOSEK_PARAMS)
+		candidates.append((solver, solver_kwargs))
+	return candidates
+
+
+def _solve_problem(prob):
+	last_err = None
+	for solver, solver_kwargs in _build_solver_candidates():
+		try:
+			prob.solve(solver=solver, **solver_kwargs)
+		except Exception as ex:
+			last_err = ex
+			continue
+		if prob.status in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
+			return prob.status
+	if last_err is not None:
+		print("cvxpy fallback failed:", repr(last_err))
+	prob.solve(warm_start=True)
+	return prob.status
+
+
 
 
 def update_policy(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost):
@@ -70,7 +107,7 @@ def _objective_update(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost):
 	for i in range(1, m + 1):
 		constr += [func_value_np[i] + grad_np[i].T @ (paras_cvx - paras_t_np) + tau_np[i] * cp.sum_squares(paras_cvx - paras_t_np) <= 0]
 	prob = cp.Problem(cp.Minimize(obj), constr)
-	prob.solve(solver=cp.MOSEK)
+	_solve_problem(prob)
 	paras_mosek = paras_cvx.value
 
 	return paras_mosek, prob.status
@@ -90,9 +127,8 @@ def _feasible_update(func_value_np, grad_np, paras_t_np, tau_cost):
 	for i in range(m):
 		constr += [func_value_np[i] + grad_np[i].T @ (paras_cvx - paras_t_np) + tau_np[i] * cp.sum_squares(paras_cvx - paras_t_np) <= x_cvx]
 	prob = cp.Problem(cp.Minimize(obj), constr)
-	prob.solve(solver=cp.MOSEK)
+	_solve_problem(prob)
 	x_mosek = prob.value
 	paras_mosek = paras_cvx.value
 
 	return x_mosek, paras_mosek, prob.status
-

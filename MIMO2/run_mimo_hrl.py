@@ -45,14 +45,15 @@ DEFAULT_TAU_REWARD = 1.0
 DEFAULT_TAU_COST = 1.0
 DEFAULT_RHO_MIN_NEW_ACTOR = 0.2
 DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
+DEFAULT_FREEZE_RHO_EPISODE_COUNT = 0
 
 OLD_POLICY_BQ_LIST = [(100, 1)]
-DEFAULT_OLD_POLICY_SEED = 1
-OLD_POLICY_PRETRAIN_EPISODE = 40
+DEFAULT_OLD_POLICY_SEED = 3
+OLD_POLICY_PRETRAIN_EPISODE = 50
 OLD_POLICY_CHECKPOINT_ROOT = os.path.join(BASE_DIR, "checkpoints", "SLDAC")
 LOAD_NEW_ACTOR = True
 NEW_POLICY_INIT_BQ = (100, 1)
-NEW_POLICY_INIT_SEED = 1
+NEW_POLICY_INIT_SEED = 3
 NEW_POLICY_INIT_PRETRAIN_EPISODE = 10
 NEW_POLICY_INIT_CHECKPOINT_ROOT = OLD_POLICY_CHECKPOINT_ROOT
 
@@ -75,6 +76,7 @@ def build_python_config():
         "tau_cost": float(DEFAULT_TAU_COST),
         "rho_min_new_actor": float(DEFAULT_RHO_MIN_NEW_ACTOR),
         "rho_min_old_policy": float(DEFAULT_RHO_MIN_OLD_POLICY),
+        "freeze_rho_episode_count": int(DEFAULT_FREEZE_RHO_EPISODE_COUNT),
         "device": str(DEVICE),
         "old_policies": None,
         "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
@@ -347,6 +349,19 @@ def _finalize_rho_lower_bounds(args):
     return args
 
 
+def _finalize_freeze_rho_args(args):
+    args.freeze_rho_episode_count = int(
+        getattr(args, "freeze_rho_episode_count", DEFAULT_FREEZE_RHO_EPISODE_COUNT)
+    )
+    if args.freeze_rho_episode_count < 0:
+        raise ValueError(
+            "freeze_rho_episode_count must be a non-negative integer. got {0}".format(
+                args.freeze_rho_episode_count
+            )
+        )
+    return args
+
+
 def _apply_run_config(args, output_suffix, message, t_horizon, grad_t, num_new_data_run, q_update_time):
     print(message)
     args.run_tag = output_suffix
@@ -445,6 +460,7 @@ def build_parser():
     parser.add_argument("--tau_cost", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-min-new-actor", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-min-old-policy", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--freeze-rho-episode-count", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--old-policies", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-seed", type=int, default=argparse.SUPPRESS)
@@ -537,6 +553,7 @@ def main():
     args = _resolve_old_policy_args(args)
     args = _resolve_new_policy_init_args(args)
     args = _finalize_rho_lower_bounds(args)
+    args = _finalize_freeze_rho_args(args)
     _migrate_legacy_checkpoints(args.old_policy_checkpoint_root, EXAMPLE_NAME, default_seed=DEFAULT_OLD_POLICY_SEED)
     args = _validate_old_policy_checkpoints(args)
     args = _validate_new_policy_checkpoint(args)

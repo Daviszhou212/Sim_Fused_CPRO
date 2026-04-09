@@ -25,17 +25,39 @@ def get_algorithm_output_dir(base_dir, algorithm_name, create=True):
     return _ensure_dir(output_dir, create)
 
 
-def get_compare_output_dir(base_dir, create=True):
+def _format_seed_dir(seed):
+    return "seed_{0}".format(int(seed))
+
+
+def _normalize_compare_run_tag(run_tag):
+    text = "" if run_tag is None else str(run_tag).strip()
+    return text
+
+
+def get_compare_output_dir(base_dir, create=True, seed=None, run_tag=None):
     compare_dir = os.path.join(get_outputs_root(base_dir, create=create), COMPARE_DIRNAME)
-    return _ensure_dir(compare_dir, create)
+    compare_dir = _ensure_dir(compare_dir, create)
+    if seed is None:
+        target_dir = compare_dir
+    else:
+        target_dir = os.path.join(compare_dir, _format_seed_dir(seed))
+        target_dir = _ensure_dir(target_dir, create)
+    normalized_run_tag = _normalize_compare_run_tag(run_tag)
+    if not normalized_run_tag:
+        return target_dir
+    run_tag_dir = os.path.join(target_dir, normalized_run_tag)
+    return _ensure_dir(run_tag_dir, create)
 
 
 def build_algorithm_artifact_path(base_dir, algorithm_name, filename, create=True):
     return os.path.join(get_algorithm_output_dir(base_dir, algorithm_name, create=create), str(filename))
 
 
-def build_compare_artifact_path(base_dir, filename, create=True):
-    return os.path.join(get_compare_output_dir(base_dir, create=create), str(filename))
+def build_compare_artifact_path(base_dir, filename, create=True, seed=None, run_tag=None):
+    return os.path.join(
+        get_compare_output_dir(base_dir, create=create, seed=seed, run_tag=run_tag),
+        str(filename),
+    )
 
 
 def resolve_algorithm_artifact_path(base_dir, algorithm_name, filename):

@@ -4,13 +4,14 @@ from critic_opt import Critic
 from utils import update_policy
 from model import GaussianPolicy_MIMO
 from model import GaussianPolicy_CLQR
+from model import get_mimo_actor_hidden_dims
 from buffer import DataStorage
 import os
 import numpy as np
 import torch
 
 
-CHECKPOINT_SCHEMA_VERSION = 1
+CHECKPOINT_SCHEMA_VERSION = 2
 CHECKPOINT_CONFIG_FIELDS = (
 	"T",
 	"grad_T",
@@ -122,6 +123,7 @@ def _save_sldac_checkpoint(
 		"model": {
 			"actor_state_dict": _cpu_state_dict(actor.net),
 			"actor_log_std": actor.log_std.detach().cpu().clone(),
+			"actor_hidden_dims": None if ("MIMO" not in str(example_name)) else list(get_mimo_actor_hidden_dims(actor.hidden_dims)),
 		},
 		"stats": {
 			"reward_history": [float(item) for item in reward_history],
@@ -294,9 +296,8 @@ def SLDAC_main(args, example_name):
 				Q_update_index = 0
 				Q_hat_torch = critic.critic_value(state_batch_torch, action_batch_torch)
 				Q_hat = Q_hat_torch.detach().cpu().numpy()
-				Q_hat[:, 0] = (Q_hat[:, 0] - np.mean(Q_hat[:, 0])) / (np.std(Q_hat[:, 0]) + 1e-6)
-				for _ in range(1, 1 + constraint_dim):
-					Q_hat[:, _] = (Q_hat[:, _] - np.mean(Q_hat[:, _])) / (np.std(Q_hat[:, 0]) + 1e-6)
+				for _ in range(0, 1 + constraint_dim):
+					Q_hat[:, _] = Q_hat[:, _] - np.mean(Q_hat[:, _])
 				Q_hat_torch = torch.tensor(Q_hat, dtype=torch.float, device=device)
 				state_batch_torch = torch.tensor(state_batch, dtype=torch.float, device=device)
 				action_batch_torch = torch.tensor(action_batch, dtype=torch.float, device=device)

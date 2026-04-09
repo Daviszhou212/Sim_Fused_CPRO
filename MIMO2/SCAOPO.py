@@ -102,9 +102,8 @@ def SCAOPO_main(args, example_name):
             for _ in range(1, temp + 1):
                 costs_tmp = costs_batch[_: _ + T]
                 Q_hat[_ - 1] = np.sum(costs_tmp, axis=0) - temp * func_value
-            Q_hat[:, 0] = (Q_hat[:, 0] - np.mean(Q_hat[:, 0])) / (np.std(Q_hat[:, 0]) + 1e-6)
-            for _ in range(1, 1 + constraint_dim):
-                Q_hat[:, _] =((Q_hat[:, _] - np.mean(Q_hat[:, _])))
+            for _ in range(0, 1 + constraint_dim):
+                Q_hat[:, _] = (Q_hat[:, _] - np.mean(Q_hat[:, _]))
             Q_hat_torch = torch.tensor(Q_hat, dtype=torch.float, device=device)
 
             # estimate the gradient

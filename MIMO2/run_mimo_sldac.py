@@ -30,7 +30,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Top-level defaults shared by all active SLDAC runs in this entry script.
 DEFAULT_SEED = 0
-DEFAULT_SEEDS = (0, 79, 71, 66, 91)
+DEFAULT_SEEDS = (6, 7, 8, 9 ,10)
 DEFAULT_WINDOW = 10000
 DEFAULT_EPISODE = 100
 DEFAULT_UPDATE_TIME_PER_EPISODE = 10

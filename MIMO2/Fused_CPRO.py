@@ -13,6 +13,7 @@ from buffer import DataStorage
 from critic_opt import Critic
 from environment import Environment_CLQR, Environment_MIMO
 from model import GaussianPolicy_CLQR, GaussianPolicy_MIMO
+from model import get_legacy_mimo_actor_hidden_dims, get_mimo_actor_hidden_dims, normalize_hidden_dims
 
 
 # 策略库配置：每个场景固定使用 1 个 DK 策略 + 2 个镜像 SLDAC 策略。
@@ -495,9 +496,13 @@ def _build_simplex_constraints(constr, paras_cvx, simplex_dim, rho_lower_bounds)
     return constr
 
 
-def _get_xi(update_index, decay_pow, xi0):
-    xi = float(xi0) / ((int(update_index) + 1) ** float(decay_pow))
+def _get_xi(episode_index, decay_pow, xi0):
+    xi = float(xi0) / ((int(episode_index) + 1) ** float(decay_pow))
     return min(max(xi, 0.0), 1.0)
+
+
+def _should_freeze_rho_update(episode_index, freeze_rho_episode_count):
+    return int(episode_index) < max(int(freeze_rho_episode_count), 0)
 
 
 def _build_policy_gradient_batch_impl(
@@ -863,10 +868,8 @@ def _q_head_normalize(q_hat):
     if q_hat.ndim != 2 or q_hat.shape[0] <= 0:
         return q_hat
     out = q_hat.copy()
-    reward_std = np.std(out[:, 0]) + 1e-6
-    out[:, 0] = (out[:, 0] - np.mean(out[:, 0])) / reward_std
-    for idx in range(1, out.shape[1]):
-        out[:, idx] = (out[:, idx] - np.mean(out[:, idx])) / reward_std
+    for idx in range(out.shape[1]):
+        out[:, idx] = out[:, idx] - np.mean(out[:, idx])
     return out
 
 
@@ -882,9 +885,7 @@ def _prcrl_q_head_normalize(q_hat):
     if q_hat.ndim != 2 or q_hat.shape[0] <= 0:
         return q_hat
     out = q_hat.copy()
-    reward_std = np.std(out[:, 0]) + 1e-6
-    out[:, 0] = (out[:, 0] - np.mean(out[:, 0])) / reward_std
-    for idx in range(1, out.shape[1]):
+    for idx in range(out.shape[1]):
         out[:, idx] = out[:, idx] - np.mean(out[:, idx])
     return out
 
@@ -1025,6 +1026,23 @@ def _load_sldac_actor_checkpoint(
     model = checkpoint.get("model", {})
     actor_state_dict = model.get("actor_state_dict")
     actor_log_std = model.get("actor_log_std")
+    if _is_mimo(example_name):
+        expected_hidden_dims = get_mimo_actor_hidden_dims()
+        checkpoint_hidden_dims_raw = model.get("actor_hidden_dims")
+        if checkpoint_hidden_dims_raw is None:
+            checkpoint_hidden_dims = get_legacy_mimo_actor_hidden_dims()
+        else:
+            checkpoint_hidden_dims = normalize_hidden_dims(
+                checkpoint_hidden_dims_raw,
+                "checkpoint actor_hidden_dims",
+            )
+        if tuple(checkpoint_hidden_dims) != tuple(expected_hidden_dims):
+            raise ValueError(
+                "checkpoint actor hidden_dims mismatch: expected {0}, got {1}".format(
+                    tuple(int(item) for item in expected_hidden_dims),
+                    tuple(int(item) for item in checkpoint_hidden_dims),
+                )
+            )
     if actor_state_dict is None:
         raise KeyError("checkpoint model.actor_state_dict is missing.")
     if actor_log_std is None:
@@ -1320,7 +1338,15 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
     t_horizon = int(args.T)
     grad_t = int(args.grad_T)
     num_new_data = int(args.num_new_data)
+    episode = int(args.episode)
     update_time_per_episode = int(args.update_time_per_episode)
+    freeze_rho_episode_count = int(getattr(args, "freeze_rho_episode_count", 0))
+    if freeze_rho_episode_count < 0:
+        raise ValueError(
+            "freeze_rho_episode_count must be a non-negative integer. got freeze_rho_episode_count={0}".format(
+                freeze_rho_episode_count
+            )
+        )
     max_steps = int(args.MAX_STEPS)
     alpha_pow = float(args.alpha_pow)
     beta_actor_pow = float(getattr(args, "beta_actor_pow", getattr(args, "beta_pow", 0.7)))
@@ -1405,8 +1431,11 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
             alpha = 1.0 / ((update_index + 1) ** alpha_pow)
             beta_actor = 1.0 / ((update_index + 1) ** beta_actor_pow)
             beta_rho = _get_rho_beta(update_index, rho_scheduler_config)
+            episode_index = _resolve_episode_from_update(update_index, update_time_per_episode, episode)
+            freeze_rho_update = _should_freeze_rho_update(episode_index, freeze_rho_episode_count)
             if use_offline_data:
-                xi = _get_xi(update_index, rho_scheduler_config["xi_pow"], xi0)
+                # xi now follows the episode index and stays constant within one episode.
+                xi = _get_xi(episode_index, rho_scheduler_config["xi_pow"], xi0)
             else:
                 xi = 0.0
             eta = 1.0 / ((update_index + 1) ** eta_pow)
@@ -1440,6 +1469,13 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
                 cost_average_save.append(float(np.mean(aver_cost_buffer)))
                 rho_history_save.append(np.asarray(rho, dtype=np.float64).copy())
                 print(_format_rho_debug_line(rho_labels, rho))
+                if freeze_rho_update:
+                    print(
+                        "rho_update_frozen: episode {0}/{1}".format(
+                            int(episode_index + 1),
+                            int(freeze_rho_episode_count),
+                        )
+                    )
                 if use_offline_data:
                     xi_history_save.append(float(xi))
                     print("xi_offline_weight:", float(xi))
@@ -1541,7 +1577,10 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
                 actor_bar = theta_bar[rho.size:]
                 rho_next = (1.0 - beta_rho) * rho + beta_rho * rho_bar
                 actor_next = (1.0 - beta_actor) * actor_now + beta_actor * actor_bar
-                rho_applied = _normalize_simplex(rho_next, rho_lower_bounds)
+                if freeze_rho_update:
+                    rho_applied = np.asarray(rho, dtype=np.float64).copy()
+                else:
+                    rho_applied = _normalize_simplex(rho_next, rho_lower_bounds)
                 actor_drift_save.append(_rms_drift(actor_next, actor_now))
                 critic_drift_save.append(critic_drift)
                 rho_drift_save.append(_rms_drift(rho_applied, rho))
@@ -1586,7 +1625,15 @@ def _run_prcrl_main(args, example_name):
     num_new_data = int(args.num_new_data)
     if num_new_data <= 0:
         raise ValueError("num_new_data must be positive for PRCRL.")
+    episode = int(args.episode)
     update_time_per_episode = int(args.update_time_per_episode)
+    freeze_rho_episode_count = int(getattr(args, "freeze_rho_episode_count", 0))
+    if freeze_rho_episode_count < 0:
+        raise ValueError(
+            "freeze_rho_episode_count must be a non-negative integer. got freeze_rho_episode_count={0}".format(
+                freeze_rho_episode_count
+            )
+        )
     max_steps = int(args.MAX_STEPS)
     alpha_pow = float(args.alpha_pow)
     beta_actor_pow = float(getattr(args, "beta_actor_pow", getattr(args, "beta_pow", 0.7)))
@@ -1656,6 +1703,8 @@ def _run_prcrl_main(args, example_name):
         alpha = 1.0 / ((update_index + 1) ** alpha_pow)
         beta_actor = 1.0 / ((update_index + 1) ** beta_actor_pow)
         beta_rho = _get_rho_beta(update_index, rho_scheduler_config)
+        episode_index = _resolve_episode_from_update(update_index, update_time_per_episode, episode)
+        freeze_rho_update = _should_freeze_rho_update(episode_index, freeze_rho_episode_count)
 
         state_buffer, action_buffer, costs_buffer, next_state_buffer, aver_reward_buffer, aver_cost_buffer = buffer.take_experiences()
         func_value_tilda = np.mean(costs_buffer, axis=0)
@@ -1669,6 +1718,13 @@ def _run_prcrl_main(args, example_name):
             cost_average_save.append(float(np.mean(aver_cost_buffer)))
             rho_history_save.append(np.asarray(rho, dtype=np.float64).copy())
             print(_format_rho_debug_line(rho_labels, rho))
+            if freeze_rho_update:
+                print(
+                    "rho_update_frozen: episode {0}/{1}".format(
+                        int(episode_index + 1),
+                        int(freeze_rho_episode_count),
+                    )
+                )
             print_index += 1
 
         q_hat = _prcrl_window_q_hat(costs_buffer, func_value, t_horizon)
@@ -1710,7 +1766,10 @@ def _run_prcrl_main(args, example_name):
         actor_bar = theta_bar[rho.size:]
         rho_next = (1.0 - beta_rho) * rho + beta_rho * rho_bar
         actor_next = (1.0 - beta_actor) * actor_now + beta_actor * actor_bar
-        rho_applied = _normalize_simplex(rho_next, rho_lower_bounds)
+        if freeze_rho_update:
+            rho_applied = np.asarray(rho, dtype=np.float64).copy()
+        else:
+            rho_applied = _normalize_simplex(rho_next, rho_lower_bounds)
 
         update_index += 1
         drift_update_index_save.append(int(update_index))

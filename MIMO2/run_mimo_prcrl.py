@@ -26,14 +26,14 @@ PRCRL_RUNS = [
 ]
 
 DEFAULT_SEED = 0
-DEFAULT_OLD_POLICY_SEED = 1
+
 DEFAULT_WINDOW = 10000
 DEFAULT_EPISODE = 100
 DEFAULT_UPDATE_TIME_PER_EPISODE = 10
 DEFAULT_NUM_UPDATE_TIME = DEFAULT_EPISODE * DEFAULT_UPDATE_TIME_PER_EPISODE
 DEFAULT_ALPHA_POW = 0.6
 DEFAULT_BETA_ACTOR_POW = 0.7
-DEFAULT_BETA_RHO_POW = 0.7
+DEFAULT_BETA_RHO_POW = 0.1
 DEFAULT_ETA_POW = 0.01
 DEFAULT_GAMMA_POW_REWARD = 0.3
 DEFAULT_GAMMA_POW_COST = 0.3
@@ -42,6 +42,7 @@ DEFAULT_TAU_COST = 1.0
 DEFAULT_RHO_SCHEDULER = "power"
 DEFAULT_RHO_MIN_NEW_ACTOR = 0.2
 DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
+DEFAULT_FREEZE_RHO_EPISODE_COUNT = 0
 DEFAULT_XI_POW = DEFAULT_BETA_RHO_POW
 DEFAULT_RHO_BETA_PEAK_EPISODE = 15
 DEFAULT_RHO_BETA_PEAK_VALUE = 0.5
@@ -52,13 +53,14 @@ DEFAULT_RHO_BETA_MIN = 0.01
 DEFAULT_RHO_RESTART_ROUNDS = 3
 DEFAULT_RHO_PERIOD_MULT = 2
 
+DEFAULT_OLD_POLICY_SEED = 3
 OLD_POLICY_BQ_LIST = [(100, 1)]
-OLD_POLICY_PRETRAIN_EPISODE = 20
+OLD_POLICY_PRETRAIN_EPISODE = 50
 OLD_POLICY_CHECKPOINT_ROOT = os.path.join(BASE_DIR, "checkpoints", "SLDAC")
-LOAD_NEW_ACTOR = False
+LOAD_NEW_ACTOR = True
 NEW_POLICY_INIT_BQ = (100, 1)
-NEW_POLICY_INIT_SEED = 1
-NEW_POLICY_INIT_PRETRAIN_EPISODE = 10
+NEW_POLICY_INIT_SEED = 3
+NEW_POLICY_INIT_PRETRAIN_EPISODE = 20
 NEW_POLICY_INIT_CHECKPOINT_ROOT = OLD_POLICY_CHECKPOINT_ROOT
 
 
@@ -81,6 +83,7 @@ def build_python_config():
         "rho_scheduler": str(DEFAULT_RHO_SCHEDULER),
         "rho_min_new_actor": float(DEFAULT_RHO_MIN_NEW_ACTOR),
         "rho_min_old_policy": float(DEFAULT_RHO_MIN_OLD_POLICY),
+        "freeze_rho_episode_count": int(DEFAULT_FREEZE_RHO_EPISODE_COUNT),
         "xi_pow": float(DEFAULT_XI_POW),
         "rho_beta_peak_episode": int(DEFAULT_RHO_BETA_PEAK_EPISODE),
         "rho_beta_peak_value": float(DEFAULT_RHO_BETA_PEAK_VALUE),
@@ -373,6 +376,19 @@ def _finalize_rho_lower_bounds(args):
     return args
 
 
+def _finalize_freeze_rho_args(args):
+    args.freeze_rho_episode_count = int(
+        getattr(args, "freeze_rho_episode_count", DEFAULT_FREEZE_RHO_EPISODE_COUNT)
+    )
+    if args.freeze_rho_episode_count < 0:
+        raise ValueError(
+            "freeze_rho_episode_count must be a non-negative integer. got {0}".format(
+                args.freeze_rho_episode_count
+            )
+        )
+    return args
+
+
 def _apply_run_config(args, output_suffix, message, t_horizon, grad_t, num_new_data_run, q_update_time):
     print(message)
     args.run_tag = output_suffix
@@ -476,6 +492,7 @@ def build_parser():
     parser.add_argument("--rho-scheduler", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--rho-min-new-actor", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-min-old-policy", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--freeze-rho-episode-count", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--xi_pow", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-beta-peak-episode", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--rho-beta-peak-value", type=float, default=argparse.SUPPRESS)
@@ -546,6 +563,7 @@ def main():
     args = _resolve_old_policy_args(args)
     args = _resolve_new_policy_init_args(args)
     args = _finalize_rho_lower_bounds(args)
+    args = _finalize_freeze_rho_args(args)
     _migrate_legacy_checkpoints(args.old_policy_checkpoint_root, EXAMPLE_NAME, default_seed=DEFAULT_OLD_POLICY_SEED)
     args = _validate_old_policy_checkpoints(args)
     args = _validate_new_policy_checkpoint(args)
