@@ -607,10 +607,11 @@ def _build_rho_scheduler_config(args, beta_actor_pow):
     mode = _get_rho_scheduler_mode(args)
     if mode == RHO_SCHEDULER_POWER:
         beta_rho_pow = float(getattr(args, "beta_rho_pow", beta_actor_pow))
+        xi_pow = float(getattr(args, "xi_pow", beta_rho_pow))
         return {
             "mode": mode,
             "beta_rho_pow": beta_rho_pow,
-            "xi_pow": beta_rho_pow,
+            "xi_pow": xi_pow,
         }
     if mode == RHO_SCHEDULER_EPISODE_PEAK_EXP_DECAY:
         peak_episode = int(getattr(args, "rho_beta_peak_episode", RHO_BETA_PEAK_EPISODE))
