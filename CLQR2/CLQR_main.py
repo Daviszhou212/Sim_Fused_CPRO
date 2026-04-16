@@ -24,6 +24,28 @@ OBJECTIVE_LABEL = "Objective cost (avg. quadratic objective)"
 COST_LABEL = "Constraint cost (avg. quadratic constraint)"
 REUSE_LABEL = "Policy reuse probability"
 
+# 平滑显示配置：仅影响画图展示，不修改原始 mat 数据。
+FUSED_CPRO_SMOOTH_ENABLE = False
+FUSED_CPRO_SMOOTH_WINDOW = 5
+FUSED_CPRO_COS_RHO_SMOOTH_ENABLE = False
+FUSED_CPRO_COS_RHO_SMOOTH_WINDOW = 5
+HRL_SMOOTH_ENABLE = False
+HRL_SMOOTH_WINDOW = 5
+PRCRL_SMOOTH_ENABLE = False
+PRCRL_SMOOTH_WINDOW = 5
+SLDAC_SMOOTH_ENABLE = True
+SLDAC_SMOOTH_WINDOW = 15
+DK_SMOOTH_ENABLE = False
+DK_SMOOTH_WINDOW = 5
+ACPO_SMOOTH_ENABLE = False
+ACPO_SMOOTH_WINDOW = 5
+SCAOPO_SMOOTH_ENABLE = False
+SCAOPO_SMOOTH_WINDOW = 5
+PPO_SMOOTH_ENABLE = False
+PPO_SMOOTH_WINDOW = 5
+CPO_SMOOTH_ENABLE = False
+CPO_SMOOTH_WINDOW = 5
+
 # 绘图目标配置：直接在这里增删曲线即可，不依赖 CLI。
 PLOT_SERIES = [
     {
@@ -35,6 +57,8 @@ PLOT_SERIES = [
         "color": "#0072B2",
         "marker": "o",
         "prefer_seed_suffix": True,
+        "smooth_enable": FUSED_CPRO_SMOOTH_ENABLE,
+        "smooth_window": FUSED_CPRO_SMOOTH_WINDOW,
     },
     # {
     #     "label": "Fused-CPRO-CosRho",
@@ -45,6 +69,8 @@ PLOT_SERIES = [
     #     "color": "#2A9D8F",
     #     "marker": "h",
     #     "prefer_seed_suffix": True,
+    #     "smooth_enable": FUSED_CPRO_COS_RHO_SMOOTH_ENABLE,
+    #     "smooth_window": FUSED_CPRO_COS_RHO_SMOOTH_WINDOW,
     # },
     # {
     #     "label": "HRL",
@@ -55,6 +81,8 @@ PLOT_SERIES = [
     #     "color": "#E69F00",
     #     "marker": "P",
     #     "prefer_seed_suffix": True,
+    #     "smooth_enable": HRL_SMOOTH_ENABLE,
+    #     "smooth_window": HRL_SMOOTH_WINDOW,
     # },
     {
         "label": "PRCRL",
@@ -65,6 +93,8 @@ PLOT_SERIES = [
         "color": "#D55E00",
         "marker": "X",
         "prefer_seed_suffix": True,
+        "smooth_enable": PRCRL_SMOOTH_ENABLE,
+        "smooth_window": PRCRL_SMOOTH_WINDOW,
     },
     {
         "label": "SLDAC",
@@ -74,6 +104,8 @@ PLOT_SERIES = [
         "color": "#009E73",
         "marker": "s",
         "prefer_seed_suffix": True,
+        "smooth_enable": SLDAC_SMOOTH_ENABLE,
+        "smooth_window": SLDAC_SMOOTH_WINDOW,
     },
     # {
     #     "label": "DK",
@@ -83,43 +115,53 @@ PLOT_SERIES = [
     #     "color": "#8C8C00",
     #     "marker": "*",
     #     "prefer_seed_suffix": True,
+    #     "smooth_enable": DK_SMOOTH_ENABLE,
+    #     "smooth_window": DK_SMOOTH_WINDOW,
     # },
-    {
-        "label": "ACPO",
-        "artifact_group": "ACPO",
-        "reward_stem": "ACPO_reward_b500.mat",
-        "cost_stem": "ACPO_cost_b500.mat",
-        "color": "#CC79A7",
-        "marker": "*",
-        "prefer_seed_suffix": True,
-    },
     # {
-    #     "label": "SCAOPO",
-    #     "artifact_group": "SCAOPO",
-    #     "reward_stem": "SCAOPO_reward_100.mat",
-    #     "cost_stem": "SCAOPO_cost_100.mat",
-    #     "color": "#64B5CD",
-    #     "marker": "v",
-    #     "prefer_seed_suffix": False,
+    #     "label": "ACPO",
+    #     "artifact_group": "ACPO",
+    #     "reward_stem": "ACPO_reward_b500.mat",
+    #     "cost_stem": "ACPO_cost_b500.mat",
+    #     "color": "#CC79A7",
+    #     "marker": "*",
+    #     "prefer_seed_suffix": True,
+    #     "smooth_enable": ACPO_SMOOTH_ENABLE,
+    #     "smooth_window": ACPO_SMOOTH_WINDOW,
     # },
     {
-        "label": "PPO",
+        "label": "SCAOPO",
+        "artifact_group": "SCAOPO",
+        "reward_stem": "SCAOPO_reward_100.mat",
+        "cost_stem": "SCAOPO_cost_100.mat",
+        "color": "#64B5CD",
+        "marker": "v",
+        "prefer_seed_suffix": False,
+        "smooth_enable": SCAOPO_SMOOTH_ENABLE,
+        "smooth_window": SCAOPO_SMOOTH_WINDOW,
+    },
+    {
+        "label": "PPO-Lag",
         "artifact_group": "ppo",
         "reward_stem": "reward_ppo_100.mat",
         "cost_stem": "cost_ppo_100.mat",
         "color": "#000000",
         "marker": "<",
         "prefer_seed_suffix": False,
+        "smooth_enable": PPO_SMOOTH_ENABLE,
+        "smooth_window": PPO_SMOOTH_WINDOW,
     },
-    # {
-    #     "label": "CPO",
-    #     "artifact_group": "cpo",
-    #     "reward_stem": "reward_cpo_100.mat",
-    #     "cost_stem": "cost_cpo_100.mat",
-    #     "color": "#7E2F8E",
-    #     "marker": ">",
-    #     "prefer_seed_suffix": False,
-    # },
+    {
+        "label": "CPO",
+        "artifact_group": "cpo",
+        "reward_stem": "reward_cpo_100.mat",
+        "cost_stem": "cost_cpo_100.mat",
+        "color": "#7E2F8E",
+        "marker": ">",
+        "prefer_seed_suffix": False,
+        "smooth_enable": CPO_SMOOTH_ENABLE,
+        "smooth_window": CPO_SMOOTH_WINDOW,
+    },
 ]
 
 # 科研绘图样式：与 MIMO1 保持一致的 IEEE 风格。
@@ -133,11 +175,13 @@ MARKER_SIZE = 5.0
 MARK_EVERY = 6
 COMPARE_LEGEND_NCOL = 4
 REUSE_LEGEND_NCOL = 3
-COMPARE_HEADER_RECT = (0.0, 0.0, 1.0, 0.78)
-REUSE_HEADER_RECT = (0.0, 0.0, 1.0, 0.88)
+COMPARE_HEADER_RECT = (0.0, 0.0, 1.0, 0.90)
+REUSE_HEADER_RECT = (0.0, 0.0, 1.0, 0.95)
+COMPARE_LEGEND_Y = 0.995
+REUSE_LEGEND_Y = 0.992
 REUSE_PANEL_HEIGHT = 2.6
 # objective 图 y 轴范围：忽略显著过高的算法，展开主流算法的下方趋势。
-OBJECTIVE_YLIM_IGNORE_LABELS = {"PPO"}
+OBJECTIVE_YLIM_IGNORE_LABELS = {"PPO-Lag"}
 OBJECTIVE_YLIM_PAD_RATIO = 0.08
 OBJECTIVE_YLIM_MIN_PAD = 0.8
 
@@ -156,7 +200,7 @@ SERIES_REQUIRED_KEYS = (
     "marker",
     "prefer_seed_suffix",
 )
-SERIES_OPTIONAL_KEYS = ("rho_stem",)
+SERIES_OPTIONAL_KEYS = ("rho_stem", "smooth_enable", "smooth_window")
 SEED_SUFFIX_PATTERN = re.compile(r"_seed\d+$")
 
 
@@ -165,6 +209,7 @@ def _apply_ieee_style():
         {
             "figure.dpi": FIG_DPI,
             "savefig.dpi": FIG_DPI,
+            "savefig.pad_inches": 0.02,
             "font.family": "serif",
             "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
             "mathtext.fontset": "stix",
@@ -175,16 +220,24 @@ def _apply_ieee_style():
             "xtick.labelsize": 8,
             "ytick.labelsize": 8,
             "axes.linewidth": 0.9,
+            "axes.axisbelow": True,
             "lines.linewidth": LINE_WIDTH,
             "lines.markersize": MARKER_SIZE,
+            "lines.solid_capstyle": "round",
+            "lines.dash_capstyle": "round",
             "xtick.direction": "in",
             "ytick.direction": "in",
             "xtick.major.width": 0.8,
             "ytick.major.width": 0.8,
-            "grid.linewidth": 0.6,
-            "grid.alpha": 0.25,
+            "grid.linewidth": 0.5,
+            "grid.alpha": 0.18,
             "grid.linestyle": "--",
             "legend.frameon": False,
+            "legend.handlelength": 1.8,
+            "legend.handletextpad": 0.45,
+            "legend.columnspacing": 0.9,
+            "legend.labelspacing": 0.25,
+            "legend.borderaxespad": 0.15,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
         }
@@ -198,6 +251,36 @@ def _series_label(series_config):
 def _load_curve(mat_path):
     data = loadmat(mat_path)
     return np.asarray(data["array"], dtype=np.float64).reshape(-1)
+
+
+def _moving_average(values, window):
+    arr = np.asarray(values, dtype=np.float64).reshape(-1)
+    if arr.size <= 0:
+        return arr
+
+    window = int(window)
+    if window <= 1:
+        return arr.copy()
+
+    out = np.zeros_like(arr)
+    for idx in range(arr.size):
+        left = max(0, idx - window + 1)
+        out[idx] = np.mean(arr[left : idx + 1])
+    return out
+
+
+def _series_smooth_enabled(series_config):
+    return bool(series_config.get("smooth_enable", False))
+
+
+def _series_smooth_window(series_config):
+    return int(series_config.get("smooth_window", 5))
+
+
+def _maybe_smooth(series_config, values):
+    if not _series_smooth_enabled(series_config):
+        return np.asarray(values, dtype=np.float64)
+    return _moving_average(values, _series_smooth_window(series_config))
 
 
 def _load_reuse_history(mat_path):
@@ -290,6 +373,23 @@ def _validate_plot_series_config(plot_series):
                     )
                 )
             reuse_series.append(series_config)
+
+        smooth_enable = series_config.get("smooth_enable")
+        if smooth_enable is not None and not isinstance(smooth_enable, bool):
+            raise TypeError("PLOT_SERIES[{0}] field smooth_enable must be bool.".format(idx))
+
+        smooth_window = series_config.get("smooth_window")
+        if smooth_window is not None:
+            try:
+                smooth_window = int(smooth_window)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    "PLOT_SERIES[{0}] field smooth_window must be an integer.".format(idx)
+                ) from exc
+            if smooth_window <= 0:
+                raise ValueError(
+                    "PLOT_SERIES[{0}] field smooth_window must be positive.".format(idx)
+                )
     return reuse_series
 
 
@@ -337,7 +437,7 @@ def _try_load_reuse_history(path_getter):
 
 def _style_axis(ax):
     ax.grid(True, axis="y")
-    ax.grid(True, axis="x", alpha=0.12)
+    ax.grid(True, axis="x", alpha=0.08)
     for spine in ax.spines.values():
         spine.set_linewidth(0.9)
 
@@ -353,7 +453,10 @@ def _resolve_objective_ylim(curves):
 
     common_length = _resolve_shortest_curve_length(target_curves)
     stacked = np.concatenate(
-        [np.asarray(values[:common_length], dtype=np.float64).reshape(-1) for _, values in target_curves]
+        [
+            _maybe_smooth(series_config, values[:common_length]).reshape(-1)
+            for series_config, values in target_curves
+        ]
     )
     y_min = float(np.min(stacked))
     y_max = float(np.max(stacked))
@@ -362,19 +465,21 @@ def _resolve_objective_ylim(curves):
     return y_min - pad, y_max + pad
 
 
-def _apply_compare_header(fig, handles, labels, title_text, legend_ncol, layout_rect):
-    fig.suptitle(title_text, y=0.985)
+def _apply_compare_header(fig, handles, labels, legend_ncol, layout_rect, legend_y):
     fig.legend(
         handles,
         labels,
         loc="upper center",
-        bbox_to_anchor=(0.5, 0.93),
+        bbox_to_anchor=(0.5, float(legend_y)),
         ncol=int(legend_ncol),
         frameon=False,
-        columnspacing=1.1,
-        handlelength=2.0,
+        columnspacing=0.9,
+        handlelength=1.8,
+        handletextpad=0.45,
+        labelspacing=0.25,
+        borderaxespad=0.15,
     )
-    fig.tight_layout(pad=0.45, rect=layout_rect)
+    fig.tight_layout(pad=0.28, rect=layout_rect)
 
 
 def _save_figure(fig, stem):
@@ -406,9 +511,10 @@ def _plot_algorithm_curves(ax, curves):
     common_length = _resolve_shortest_curve_length(curves)
     episodes = np.arange(1, common_length + 1, dtype=np.int32)
     for series_config, values in curves:
+        plot_values = _maybe_smooth(series_config, values[:common_length])
         ax.plot(
             episodes,
-            values[:common_length],
+            plot_values,
             color=str(series_config["color"]),
             marker=str(series_config["marker"]),
             markevery=MARK_EVERY,
@@ -426,7 +532,7 @@ def _plot_objective(curves):
     ax.set_ylim(*_resolve_objective_ylim(curves))
     _style_axis(ax)
     handles, labels = ax.get_legend_handles_labels()
-    _apply_compare_header(fig, handles, labels, "CLQR", COMPARE_LEGEND_NCOL, COMPARE_HEADER_RECT)
+    _apply_compare_header(fig, handles, labels, COMPARE_LEGEND_NCOL, COMPARE_HEADER_RECT, COMPARE_LEGEND_Y)
     return _save_figure(fig, f"{OUTPUT_PREFIX}_objective_ieee")
 
 
@@ -445,7 +551,7 @@ def _plot_cost(curves):
     ax.set_xlim(1, max_episode)
     _style_axis(ax)
     handles, labels = ax.get_legend_handles_labels()
-    _apply_compare_header(fig, handles, labels, "CLQR", COMPARE_LEGEND_NCOL, COMPARE_HEADER_RECT)
+    _apply_compare_header(fig, handles, labels, COMPARE_LEGEND_NCOL, COMPARE_HEADER_RECT, COMPARE_LEGEND_Y)
     return _save_figure(fig, f"{OUTPUT_PREFIX}_cost_ieee")
 
 
@@ -495,7 +601,7 @@ def _plot_reuse(reuse_plots):
         ax.set_ylabel(REUSE_LABEL)
         ax.set_xlim(1, common_length)
         ax.set_ylim(0.0, 1.0)
-        ax.set_title("{0} policy mixing weights".format(series_label))
+        ax.set_title("{0} policy mixing weights".format(series_label), pad=4.0, fontsize=8.5, fontweight="semibold")
         _style_axis(ax)
         if legend_handles is None:
             legend_handles, legend_labels = ax.get_legend_handles_labels()
@@ -505,13 +611,16 @@ def _plot_reuse(reuse_plots):
             legend_handles,
             legend_labels,
             loc="upper center",
-            bbox_to_anchor=(0.5, 0.985),
+            bbox_to_anchor=(0.5, REUSE_LEGEND_Y),
             ncol=REUSE_LEGEND_NCOL,
             frameon=False,
-            columnspacing=1.2,
-            handlelength=2.0,
+            columnspacing=0.9,
+            handlelength=1.8,
+            handletextpad=0.45,
+            labelspacing=0.25,
+            borderaxespad=0.15,
         )
-    fig.tight_layout(pad=0.45, rect=REUSE_HEADER_RECT)
+    fig.tight_layout(pad=0.28, rect=REUSE_HEADER_RECT)
     return _save_figure(fig, f"{OUTPUT_PREFIX}_reuse_ieee")
 
 

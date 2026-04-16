@@ -42,8 +42,8 @@ HRL_SMOOTH_ENABLE = False
 HRL_SMOOTH_WINDOW = 5
 PRCRL_SMOOTH_ENABLE = False
 PRCRL_SMOOTH_WINDOW = 5
-SLDAC_SMOOTH_ENABLE = False
-SLDAC_SMOOTH_WINDOW = 5
+SLDAC_SMOOTH_ENABLE = True
+SLDAC_SMOOTH_WINDOW = 15
 DK_SMOOTH_ENABLE = False
 DK_SMOOTH_WINDOW = 5
 SCAOPO_SMOOTH_ENABLE = False
@@ -106,15 +106,15 @@ PLOT_SERIES = [
         "smooth_enable": SLDAC_SMOOTH_ENABLE,
         "smooth_window": SLDAC_SMOOTH_WINDOW,
     },
-    {
-        "label": "ACPO",
-        "artifact_group": "ACPO",
-        "reward_stem": f"ACPO_reward_{RUN_TAG}.mat",
-        "cost_stem": f"ACPO_cost_{RUN_TAG}.mat",
-        "color": "#009E73",
-        "marker": "*",
-        "prefer_seed_suffix": True,
-    },
+    # {
+    #     "label": "ACPO",
+    #     "artifact_group": "ACPO",
+    #     "reward_stem": f"ACPO_reward_{RUN_TAG}.mat",
+    #     "cost_stem": f"ACPO_cost_{RUN_TAG}.mat",
+    #     "color": "#009E73",
+    #     "marker": "*",
+    #     "prefer_seed_suffix": True,
+    # },
     # {
     #     "label": "DK",
     #     "artifact_group": "DK",
@@ -126,19 +126,19 @@ PLOT_SERIES = [
     #     "smooth_enable": DK_SMOOTH_ENABLE,
     #     "smooth_window": DK_SMOOTH_WINDOW,
     # },
-    # {
-    #     "label": "SCAOPO",
-    #     "artifact_group": "SCAOPO",
-    #     "reward_stem": "SCAOPO_reward_100.mat",
-    #     "cost_stem": "SCAOPO_cost_100.mat",
-    #     "color": "#009E73",
-    #     "marker": "^",
-    #     "prefer_seed_suffix": False,
-    #     "smooth_enable": SCAOPO_SMOOTH_ENABLE,
-    #     "smooth_window": SCAOPO_SMOOTH_WINDOW,
-    # },
     {
-        "label": "PPO",
+        "label": "SCAOPO",
+        "artifact_group": "SCAOPO",
+        "reward_stem": "SCAOPO_reward_100.mat",
+        "cost_stem": "SCAOPO_cost_100.mat",
+        "color": "#009E73",
+        "marker": "^",
+        "prefer_seed_suffix": False,
+        "smooth_enable": SCAOPO_SMOOTH_ENABLE,
+        "smooth_window": SCAOPO_SMOOTH_WINDOW,
+    },
+    {
+        "label": "PPO-Lag",
         "artifact_group": "ppo",
         "reward_stem": "reward_ppo_100.mat",
         "cost_stem": "cost_ppo_100.mat",
@@ -171,8 +171,10 @@ MARKER_SIZE = 5.0
 MARK_EVERY = 6
 COMPARE_LEGEND_NCOL = 4
 REUSE_LEGEND_NCOL = 3
-COMPARE_HEADER_RECT = (0.0, 0.0, 1.0, 0.78)
-REUSE_HEADER_RECT = (0.0, 0.0, 1.0, 0.88)
+COMPARE_HEADER_RECT = (0.0, 0.0, 1.0, 0.90)
+REUSE_HEADER_RECT = (0.0, 0.0, 1.0, 0.95)
+COMPARE_LEGEND_Y = 0.995
+REUSE_LEGEND_Y = 0.992
 REUSE_PANEL_HEIGHT = 2.6
 
 REUSE_COLORS = {
@@ -199,6 +201,7 @@ def _apply_ieee_style():
         {
             "figure.dpi": FIG_DPI,
             "savefig.dpi": FIG_DPI,
+            "savefig.pad_inches": 0.02,
             "font.family": "serif",
             "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
             "mathtext.fontset": "stix",
@@ -209,16 +212,24 @@ def _apply_ieee_style():
             "xtick.labelsize": 8,
             "ytick.labelsize": 8,
             "axes.linewidth": 0.9,
+            "axes.axisbelow": True,
             "lines.linewidth": LINE_WIDTH,
             "lines.markersize": MARKER_SIZE,
+            "lines.solid_capstyle": "round",
+            "lines.dash_capstyle": "round",
             "xtick.direction": "in",
             "ytick.direction": "in",
             "xtick.major.width": 0.8,
             "ytick.major.width": 0.8,
-            "grid.linewidth": 0.6,
-            "grid.alpha": 0.25,
+            "grid.linewidth": 0.5,
+            "grid.alpha": 0.18,
             "grid.linestyle": "--",
             "legend.frameon": False,
+            "legend.handlelength": 1.8,
+            "legend.handletextpad": 0.45,
+            "legend.columnspacing": 0.9,
+            "legend.labelspacing": 0.25,
+            "legend.borderaxespad": 0.15,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
         }
@@ -450,24 +461,26 @@ def _try_load_reuse_history(path_getter):
 
 def _style_axis(ax):
     ax.grid(True, axis="y")
-    ax.grid(True, axis="x", alpha=0.12)
+    ax.grid(True, axis="x", alpha=0.08)
     for spine in ax.spines.values():
         spine.set_linewidth(0.9)
 
 
-def _apply_compare_header(fig, handles, labels, title_text, legend_ncol, layout_rect):
-    fig.suptitle(title_text, y=0.985)
+def _apply_compare_header(fig, handles, labels, legend_ncol, layout_rect, legend_y):
     fig.legend(
         handles,
         labels,
         loc="upper center",
-        bbox_to_anchor=(0.5, 0.93),
+        bbox_to_anchor=(0.5, float(legend_y)),
         ncol=int(legend_ncol),
         frameon=False,
-        columnspacing=1.1,
-        handlelength=2.0,
+        columnspacing=0.9,
+        handlelength=1.8,
+        handletextpad=0.45,
+        labelspacing=0.25,
+        borderaxespad=0.15,
     )
-    fig.tight_layout(pad=0.45, rect=layout_rect)
+    fig.tight_layout(pad=0.28, rect=layout_rect)
 
 
 def _save_figure(fig, stem):
@@ -507,6 +520,17 @@ def _truncate_plot_series(*series):
     if shortest <= 0:
         raise ValueError("Empty series detected in plotting input.")
     return shortest, [item[:shortest] for item in series]
+
+
+def _resolve_global_reuse_length(reuse_plots):
+    # Align all reuse subplots to the shortest valid episode length.
+    global_shortest = min(
+        min(len(episodes), len(new_policy), len(dk_policy), len(old_policy))
+        for _, episodes, new_policy, dk_policy, old_policy in reuse_plots
+    )
+    if global_shortest <= 0:
+        raise ValueError("Empty reuse series detected in plotting input.")
+    return global_shortest
 
 
 def _objective_plot_values(series_config, values):
@@ -553,7 +577,7 @@ def _plot_objective(curves):
     ax.set_xlim(1, max_episode)
     _style_axis(ax)
     handles, labels = ax.get_legend_handles_labels()
-    _apply_compare_header(fig, handles, labels, "MIMO, b = 100, q = 1", COMPARE_LEGEND_NCOL, COMPARE_HEADER_RECT)
+    _apply_compare_header(fig, handles, labels, COMPARE_LEGEND_NCOL, COMPARE_HEADER_RECT, COMPARE_LEGEND_Y)
     return _save_figure(fig, f"{OUTPUT_PREFIX}_objective_ieee")
 
 
@@ -572,7 +596,7 @@ def _plot_cost(curves):
     ax.set_xlim(1, max_episode)
     _style_axis(ax)
     handles, labels = ax.get_legend_handles_labels()
-    _apply_compare_header(fig, handles, labels, "MIMO, b = 100, q = 1", COMPARE_LEGEND_NCOL, COMPARE_HEADER_RECT)
+    _apply_compare_header(fig, handles, labels, COMPARE_LEGEND_NCOL, COMPARE_HEADER_RECT, COMPARE_LEGEND_Y)
     return _save_figure(fig, f"{OUTPUT_PREFIX}_cost_ieee")
 
 
@@ -580,6 +604,7 @@ def _plot_reuse(reuse_plots):
     if not reuse_plots:
         raise ValueError("reuse_plots must contain at least one series.")
 
+    global_common_length = _resolve_global_reuse_length(reuse_plots)
     fig_height = REUSE_PANEL_HEIGHT * max(len(reuse_plots), 1)
     fig, axes = plt.subplots(len(reuse_plots), 1, figsize=(FIG_WIDTH, fig_height), squeeze=False)
     axes = axes.reshape(-1)
@@ -588,12 +613,16 @@ def _plot_reuse(reuse_plots):
 
     for idx, (series_config, episodes, new_policy, dk_policy, old_policy) in enumerate(reuse_plots):
         series_label = _series_label(series_config)
-        common_length, (episodes, new_policy, dk_policy, old_policy) = _truncate_plot_series(
+        _, (episodes, new_policy, dk_policy, old_policy) = _truncate_plot_series(
             episodes,
             new_policy,
             dk_policy,
             old_policy,
         )
+        episodes = episodes[:global_common_length]
+        new_policy = new_policy[:global_common_length]
+        dk_policy = dk_policy[:global_common_length]
+        old_policy = old_policy[:global_common_length]
         ax = axes[idx]
         # reuse 图保持原始混合权重，不做平滑，避免掩盖策略切换波动。
         ax.plot(
@@ -622,9 +651,9 @@ def _plot_reuse(reuse_plots):
         )
         ax.set_xlabel("Episode")
         ax.set_ylabel(REUSE_LABEL)
-        ax.set_xlim(1, common_length)
+        ax.set_xlim(1, global_common_length)
         ax.set_ylim(0.0, 1.0)
-        ax.set_title("{0} policy mixing weights".format(series_label))
+        ax.set_title("{0} policy mixing weights".format(series_label), pad=4.0, fontsize=8.5, fontweight="semibold")
         _style_axis(ax)
         if legend_handles is None:
             legend_handles, legend_labels = ax.get_legend_handles_labels()
@@ -634,13 +663,16 @@ def _plot_reuse(reuse_plots):
             legend_handles,
             legend_labels,
             loc="upper center",
-            bbox_to_anchor=(0.5, 0.985),
+            bbox_to_anchor=(0.5, REUSE_LEGEND_Y),
             ncol=REUSE_LEGEND_NCOL,
             frameon=False,
-            columnspacing=1.2,
-            handlelength=2.0,
+            columnspacing=0.9,
+            handlelength=1.8,
+            handletextpad=0.45,
+            labelspacing=0.25,
+            borderaxespad=0.15,
         )
-    fig.tight_layout(pad=0.45, rect=REUSE_HEADER_RECT)
+    fig.tight_layout(pad=0.28, rect=REUSE_HEADER_RECT)
     return _save_figure(fig, f"{OUTPUT_PREFIX}_reuse_ieee")
 
 

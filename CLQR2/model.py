@@ -11,6 +11,13 @@ def fanin_init(size, fanin=None):
 	return torch.Tensor(size).uniform_(-v, v)
 
 
+def _expand_std(log_std, reference_torch):
+	std = torch.exp(log_std)
+	if reference_torch.dim() <= 1:
+		return std
+	return std.view(1, -1).expand(reference_torch.shape[0], -1)
+
+
 class Critic_net_MIMO(nn.Module):
 
 	def __init__(self, state_dim, action_dim, device):
@@ -161,27 +168,42 @@ class GaussianPolicy_MIMO(nn.Module):
 	def forward(self, state, action):
 		raise NotImplementedError
 
+	def mean_action_tensor(self, state_torch):
+		self.net.train()
+		return self.net(state_torch)
+
+	def sample_action_tensor(self, state_torch, reparameterized=False, use_mean=False, track_log_std_grad=True):
+		self.net.train()
+		self.log_std.requires_grad = bool(track_log_std_grad)
+		mu = self.net(state_torch)
+		if use_mean:
+			return mu
+		gaussian_ = torch.distributions.normal.Normal(mu, _expand_std(self.log_std, mu))
+		if reparameterized:
+			return gaussian_.rsample()
+		return gaussian_.sample()
+
 	def evaluate_action(self, state_torch, action_torch):
 		self.net.train()
-		mu = self.net(state_torch)
 		self.log_std.requires_grad = True
-		self.std_eval = torch.exp(self.log_std)
-		self.std_eval = self.std_eval.view(1, -1).repeat(self.num_new_data, 1)
-		gaussian_ = torch.distributions.normal.Normal(mu, self.std_eval)
+		mu = self.net(state_torch)
+		gaussian_ = torch.distributions.normal.Normal(mu, _expand_std(self.log_std, mu))
 		log_prob_action = gaussian_.log_prob(action_torch).sum(dim=1)
 
 		return log_prob_action
 
 
-	def sample_action(self, state):
+	def sample_action(self, state, use_mean=False):
 		self.net.eval()
 		self.log_std.requires_grad = False
 		state_torch = torch.tensor(state, dtype=torch.float, device=self.device)
 		with torch.no_grad():
-			mu = self.net(state_torch)
-			self.std_sample = torch.exp(self.log_std)
-			gaussian_ = torch.distributions.normal.Normal(mu, self.std_sample)
-			action = gaussian_.sample()
+			action = self.sample_action_tensor(
+				state_torch,
+				reparameterized=False,
+				use_mean=use_mean,
+				track_log_std_grad=False,
+			)
 
 		return action.detach().cpu().numpy()
 
@@ -234,27 +256,42 @@ class GaussianPolicy_CLQR(nn.Module):
 	def forward(self, state, action):
 		raise NotImplementedError
 
+	def mean_action_tensor(self, state_torch):
+		self.net.train()
+		return self.net(state_torch)
+
+	def sample_action_tensor(self, state_torch, reparameterized=False, use_mean=False, track_log_std_grad=True):
+		self.net.train()
+		self.log_std.requires_grad = bool(track_log_std_grad)
+		mu = self.net(state_torch)
+		if use_mean:
+			return mu
+		gaussian_ = torch.distributions.normal.Normal(mu, _expand_std(self.log_std, mu))
+		if reparameterized:
+			return gaussian_.rsample()
+		return gaussian_.sample()
+
 	def evaluate_action(self, state_torch, action_torch):
 		self.net.train()
-		mu = self.net(state_torch)
 		self.log_std.requires_grad = True
-		self.std_eval = torch.exp(self.log_std)
-		self.std_eval = self.std_eval.view(1, -1).repeat(self.num_new_data, 1)
-		gaussian_ = torch.distributions.normal.Normal(mu, self.std_eval)
+		mu = self.net(state_torch)
+		gaussian_ = torch.distributions.normal.Normal(mu, _expand_std(self.log_std, mu))
 		log_prob_action = gaussian_.log_prob(action_torch).sum(dim=1)
 
 		return log_prob_action
 
 
-	def sample_action(self, state):
+	def sample_action(self, state, use_mean=False):
 		self.net.eval()
 		self.log_std.requires_grad = False
 		state_torch = torch.tensor(state, dtype=torch.float, device=self.device)
 		with torch.no_grad():
-			mu = self.net(state_torch)
-			self.std_sample = torch.exp(self.log_std)
-			gaussian_ = torch.distributions.normal.Normal(mu, self.std_sample)
-			action = gaussian_.sample()
+			action = self.sample_action_tensor(
+				state_torch,
+				reparameterized=False,
+				use_mean=use_mean,
+				track_log_std_grad=False,
+			)
 
 		return action.detach().cpu().numpy()
 
@@ -288,4 +325,3 @@ class MLP_Gaussian_CLQR(nn.Module):
 		x = torch.tanh(x)
 		mu = self.fc3(x)
 		return mu
-

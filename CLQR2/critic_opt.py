@@ -79,10 +79,6 @@ class Critic:
         for param_group in optimizer.param_groups:
             param_group["lr"] = float(lr_value)
 
-    def _set_scaled_optimizer_lr(self, optimizer, base_lr, eta):
-        lr_value = float(base_lr) * max(float(eta), 0.0)
-        self._set_optimizer_lr(optimizer, lr_value)
-
     def _build_head_specs(self, gamma_reward, gamma_cost):
         specs = [
             (self.net0, self.target_net0, self.critic0_optimizer, self.critic0_base_lr, gamma_reward),
@@ -98,16 +94,16 @@ class Critic:
             )
         return specs
 
-    def _compute_td_loss(self, net, func_value_torch, head_idx, state_batch_torch, action_batch_torch, costs_batch_torch, next_state_batch_torch, next_action_batch_torch):
-        pred_now = torch.squeeze(net.forward(state_batch_torch, action_batch_torch))
-        next_pred = torch.squeeze(net.forward(next_state_batch_torch, next_action_batch_torch)).detach()
-        td_target = costs_batch_torch[:, head_idx] - func_value_torch[head_idx] + next_pred
-        td_residual = pred_now - td_target
-        return 0.5 * torch.mean(torch.square(td_residual))
+    def _compute_td_loss(self, net, target_net, func_value_torch, head_idx, state_batch_torch, action_batch_torch, costs_batch_torch, next_state_batch_torch, next_action_batch_torch):
+        next_val = torch.squeeze(target_net.forward(next_state_batch_torch, next_action_batch_torch).detach())
+        y_expected = costs_batch_torch[:, head_idx] - func_value_torch[head_idx] + next_val
+        y_predicted = torch.squeeze(net.forward(state_batch_torch, action_batch_torch))
+        return F.smooth_l1_loss(y_predicted, y_expected)
 
     def _compute_mixed_td_loss(
         self,
         net,
+        target_net,
         func_value_torch,
         head_idx,
         online_state_batch_torch,
@@ -124,6 +120,7 @@ class Critic:
     ):
         loss_online = self._compute_td_loss(
             net,
+            target_net,
             func_value_torch,
             head_idx,
             online_state_batch_torch,
@@ -141,6 +138,7 @@ class Critic:
 
         loss_offline = self._compute_td_loss(
             net,
+            target_net,
             func_value_torch,
             head_idx,
             offline_state_batch_torch,
@@ -195,12 +193,12 @@ class Critic:
         offline_next_state_batch_torch,
         offline_next_action_batch_torch,
         critic_xi,
-        eta,
         gamma,
     ):
-        self._set_scaled_optimizer_lr(optimizer, base_lr, eta)
+        self._set_optimizer_lr(optimizer, base_lr)
         loss = self._compute_mixed_td_loss(
             net,
+            target_net,
             func_value_torch,
             head_idx,
             online_state_batch_torch,
@@ -304,7 +302,6 @@ class Critic:
                     offline_next_state_batch_torch,
                     offline_next_action_batch_torch,
                     critic_xi,
-                    eta,
                     gamma,
                 )
 
