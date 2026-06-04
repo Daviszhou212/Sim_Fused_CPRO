@@ -36,8 +36,9 @@ DEFAULT_TAU_COST = 10.0
 DEFAULT_DEVICE = "cpu"
 DEFAULT_POLICY_GRADIENT_MODE = "stochastic_pathwise"
 DEFAULT_BEHAVIOR_POLICY_MODE = "gaussian_sample"
-DEFAULT_NORMALIZE_ACTOR_GRADIENT = True
+DEFAULT_NORMALIZE_ACTOR_GRADIENT = False
 DEFAULT_UPDATE_LOG_STD = True
+DEFAULT_PRINT_ACTOR_GRAD_NORM = False
 DEFAULT_CHECKPOINT_ROOT = "checkpoints/SLDAC_Pathwise"
 DEFAULT_CHECKPOINT_INTERVAL_EPISODES = 10
 DEFAULT_SAVE_FINAL_CHECKPOINT = True
@@ -69,6 +70,7 @@ def build_python_config():
         "behavior_policy_mode": str(DEFAULT_BEHAVIOR_POLICY_MODE),
         "normalize_actor_gradient": int(DEFAULT_NORMALIZE_ACTOR_GRADIENT),
         "update_log_std": int(DEFAULT_UPDATE_LOG_STD),
+        "print_actor_grad_norm": int(DEFAULT_PRINT_ACTOR_GRAD_NORM),
         "checkpoint_root": str(DEFAULT_CHECKPOINT_ROOT),
         "checkpoint_interval_episodes": int(DEFAULT_CHECKPOINT_INTERVAL_EPISODES),
         "save_final_checkpoint": int(DEFAULT_SAVE_FINAL_CHECKPOINT),
@@ -184,6 +186,7 @@ def build_parser():
     parser.add_argument("--behavior_policy_mode", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--normalize_actor_gradient", type=int, choices=[0, 1], default=argparse.SUPPRESS)
     parser.add_argument("--update_log_std", type=int, choices=[0, 1], default=argparse.SUPPRESS)
+    parser.add_argument("--print_actor_grad_norm", type=int, choices=[0, 1], default=argparse.SUPPRESS)
     parser.add_argument("--checkpoint_root", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--checkpoint_interval_episodes", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--save_final_checkpoint", type=int, choices=[0, 1], default=argparse.SUPPRESS)

@@ -18,6 +18,7 @@ class SldacPathwiseTest(unittest.TestCase):
         self.assertIn("behavior_policy_mode", config)
         self.assertIn("normalize_actor_gradient", config)
         self.assertIn("update_log_std", config)
+        self.assertIn("print_actor_grad_norm", config)
 
     def test_actor_exposes_mean_and_reparameterized_sampling(self):
         _, actor, state_dim, action_dim, _, _ = _build_scene("MIMO", 0, "cpu", 4)
@@ -68,6 +69,26 @@ class SldacPathwiseTest(unittest.TestCase):
         )
         self.assertEqual(tuple(grad_tilda_torch.shape), (1 + constraint_dim, real_theta_dim))
         self.assertTrue(torch.allclose(grad_tilda_torch[:, -action_dim:], torch.zeros_like(grad_tilda_torch[:, -action_dim:])))
+
+    def test_actor_gradient_does_not_accumulate_critic_parameter_grads(self):
+        _, actor, state_dim, _, constraint_dim, _ = _build_scene("MIMO", 0, "cpu", 4)
+        critic = Critic("MIMO", 4, state_dim, actor.action_dim, constraint_dim, 1, "cpu")
+        _, real_theta_dim = _flatten_actor_parameters(actor)
+        state_batch_torch = torch.randn(8, state_dim, dtype=torch.float)
+        _compute_pathwise_gradients(
+            actor,
+            critic,
+            state_batch_torch,
+            constraint_dim,
+            real_theta_dim,
+            "stochastic_pathwise",
+            False,
+            True,
+        )
+        for head_idx in range(1 + constraint_dim):
+            target_net = getattr(critic, "target_net{0}".format(head_idx))
+            for param in target_net.parameters():
+                self.assertIsNone(param.grad)
 
 
 if __name__ == "__main__":

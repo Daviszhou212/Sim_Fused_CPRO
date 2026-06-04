@@ -1,5 +1,11 @@
 import re
+import sys
 from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import matplotlib
 
@@ -10,9 +16,7 @@ import numpy as np
 from scipy.io import loadmat
 
 from artifact_paths import build_compare_artifact_path, resolve_algorithm_artifact_path
-
-
-BASE_DIR = Path(__file__).resolve().parent
+from plot_series_styles import apply_series_style
 
 # 绘图结果配置：优先读取带指定 seed 后缀的 mat 文件，并控制输出文件名前缀。
 PREFERRED_SEED = 0
@@ -54,8 +58,6 @@ PLOT_SERIES = [
         "reward_stem": "Fused_CPRO_reward_default.mat",
         "cost_stem": "Fused_CPRO_cost_default.mat",
         "rho_stem": "Fused_CPRO_rho_default.mat",
-        "color": "#0072B2",
-        "marker": "o",
         "prefer_seed_suffix": True,
         "smooth_enable": FUSED_CPRO_SMOOTH_ENABLE,
         "smooth_window": FUSED_CPRO_SMOOTH_WINDOW,
@@ -66,8 +68,6 @@ PLOT_SERIES = [
     #     "reward_stem": "Fused_CPRO_CosRho_reward_default.mat",
     #     "cost_stem": "Fused_CPRO_CosRho_cost_default.mat",
     #     "rho_stem": "Fused_CPRO_CosRho_rho_default.mat",
-    #     "color": "#2A9D8F",
-    #     "marker": "h",
     #     "prefer_seed_suffix": True,
     #     "smooth_enable": FUSED_CPRO_COS_RHO_SMOOTH_ENABLE,
     #     "smooth_window": FUSED_CPRO_COS_RHO_SMOOTH_WINDOW,
@@ -78,8 +78,6 @@ PLOT_SERIES = [
     #     "reward_stem": "HRL_reward_default.mat",
     #     "cost_stem": "HRL_cost_default.mat",
     #     "rho_stem": "HRL_rho_default.mat",
-    #     "color": "#E69F00",
-    #     "marker": "P",
     #     "prefer_seed_suffix": True,
     #     "smooth_enable": HRL_SMOOTH_ENABLE,
     #     "smooth_window": HRL_SMOOTH_WINDOW,
@@ -90,8 +88,6 @@ PLOT_SERIES = [
         "reward_stem": "PRCRL_reward_default.mat",
         "cost_stem": "PRCRL_cost_default.mat",
         "rho_stem": "PRCRL_rho_default.mat",
-        "color": "#D55E00",
-        "marker": "X",
         "prefer_seed_suffix": True,
         "smooth_enable": PRCRL_SMOOTH_ENABLE,
         "smooth_window": PRCRL_SMOOTH_WINDOW,
@@ -101,8 +97,6 @@ PLOT_SERIES = [
         "artifact_group": "SLDAC",
         "reward_stem": "SLDAC_reward_b100_q5.mat",
         "cost_stem": "SLDAC_cost_b100_q5.mat",
-        "color": "#009E73",
-        "marker": "s",
         "prefer_seed_suffix": True,
         "smooth_enable": SLDAC_SMOOTH_ENABLE,
         "smooth_window": SLDAC_SMOOTH_WINDOW,
@@ -112,8 +106,6 @@ PLOT_SERIES = [
     #     "artifact_group": "DK",
     #     "reward_stem": "DK_reward_default.mat",
     #     "cost_stem": "DK_cost_default.mat",
-    #     "color": "#8C8C00",
-    #     "marker": "*",
     #     "prefer_seed_suffix": True,
     #     "smooth_enable": DK_SMOOTH_ENABLE,
     #     "smooth_window": DK_SMOOTH_WINDOW,
@@ -123,8 +115,6 @@ PLOT_SERIES = [
     #     "artifact_group": "ACPO",
     #     "reward_stem": "ACPO_reward_b500.mat",
     #     "cost_stem": "ACPO_cost_b500.mat",
-    #     "color": "#CC79A7",
-    #     "marker": "*",
     #     "prefer_seed_suffix": True,
     #     "smooth_enable": ACPO_SMOOTH_ENABLE,
     #     "smooth_window": ACPO_SMOOTH_WINDOW,
@@ -134,8 +124,6 @@ PLOT_SERIES = [
         "artifact_group": "SCAOPO",
         "reward_stem": "SCAOPO_reward_100.mat",
         "cost_stem": "SCAOPO_cost_100.mat",
-        "color": "#64B5CD",
-        "marker": "v",
         "prefer_seed_suffix": False,
         "smooth_enable": SCAOPO_SMOOTH_ENABLE,
         "smooth_window": SCAOPO_SMOOTH_WINDOW,
@@ -145,8 +133,6 @@ PLOT_SERIES = [
         "artifact_group": "ppo",
         "reward_stem": "reward_ppo_100.mat",
         "cost_stem": "cost_ppo_100.mat",
-        "color": "#000000",
-        "marker": "<",
         "prefer_seed_suffix": False,
         "smooth_enable": PPO_SMOOTH_ENABLE,
         "smooth_window": PPO_SMOOTH_WINDOW,
@@ -156,13 +142,14 @@ PLOT_SERIES = [
         "artifact_group": "cpo",
         "reward_stem": "reward_cpo_100.mat",
         "cost_stem": "cost_cpo_100.mat",
-        "color": "#7E2F8E",
-        "marker": ">",
         "prefer_seed_suffix": False,
         "smooth_enable": CPO_SMOOTH_ENABLE,
         "smooth_window": CPO_SMOOTH_WINDOW,
     },
 ]
+
+# 统一图例文本、颜色与 marker，避免 MIMO / CLQR 漂移。
+PLOT_SERIES = [apply_series_style(series_config) for series_config in PLOT_SERIES]
 
 # 科研绘图样式：与 MIMO1 保持一致的 IEEE 风格。
 FIG_WIDTH = 4.6
@@ -366,9 +353,15 @@ def _validate_plot_series_config(plot_series):
         if rho_stem is not None:
             if Path(str(rho_stem)).suffix.lower() != ".mat":
                 raise ValueError("PLOT_SERIES[{0}] field rho_stem must point to a .mat file.".format(idx))
-            if str(series_config["artifact_group"]).strip() not in ("Fused_CPRO", "Fused_CPRO_CosRho", "HRL", "PRCRL"):
+            if str(series_config["artifact_group"]).strip() not in (
+                "Fused_CPRO",
+                "Fused_CPRO_RhoNew",
+                "Fused_CPRO_CosRho",
+                "HRL",
+                "PRCRL",
+            ):
                 raise ValueError(
-                    "Only Fused_CPRO, Fused_CPRO_CosRho, HRL or PRCRL series may define rho_stem. Invalid label: {0}".format(
+                    "Only Fused_CPRO, Fused_CPRO_RhoNew, Fused_CPRO_CosRho, HRL or PRCRL series may define rho_stem. Invalid label: {0}".format(
                         label
                     )
                 )

@@ -35,6 +35,7 @@ CHECKPOINT_CONFIG_FIELDS = (
 	"behavior_policy_mode",
 	"normalize_actor_gradient",
 	"update_log_std",
+	"print_actor_grad_norm",
 )
 
 
@@ -105,9 +106,11 @@ def _resolve_algorithm_modes(args):
 		getattr(args, "behavior_policy_mode", BEHAVIOR_POLICY_MODES[0]),
 		BEHAVIOR_POLICY_MODES,
 	)
-	normalize_actor_gradient = _arg_to_bool(getattr(args, "normalize_actor_gradient", True))
+	# 训练入口负责显式设置该开关；这里仅保留缺省兜底，避免直接调用时出错。
+	normalize_actor_gradient = _arg_to_bool(getattr(args, "normalize_actor_gradient", False))
 	update_log_std = _arg_to_bool(getattr(args, "update_log_std", True))
-	return policy_gradient_mode, behavior_policy_mode, normalize_actor_gradient, update_log_std
+	print_actor_grad_norm = _arg_to_bool(getattr(args, "print_actor_grad_norm", False))
+	return policy_gradient_mode, behavior_policy_mode, normalize_actor_gradient, update_log_std, print_actor_grad_norm
 
 
 def _build_scene(example_name, seed, device, grad_t):
@@ -193,6 +196,21 @@ def _critic_head_value(critic, state_batch_torch, action_batch_torch, head_idx):
 	return torch.squeeze(net.forward(state_batch_torch, action_batch_torch))
 
 
+def _freeze_critic_head_parameters(critic, constraint_dim):
+	previous_states = []
+	for head_idx in range(1 + constraint_dim):
+		net = getattr(critic, "target_net{0}".format(int(head_idx)))
+		for para in net.parameters():
+			previous_states.append((para, para.requires_grad))
+			para.requires_grad_(False)
+	return previous_states
+
+
+def _restore_parameter_grad_states(previous_states):
+	for para, requires_grad in previous_states:
+		para.requires_grad_(requires_grad)
+
+
 def _compute_pathwise_gradients(
 	actor,
 	critic,
@@ -204,31 +222,35 @@ def _compute_pathwise_gradients(
 	update_log_std,
 ):
 	grad_tilda_torch = torch.zeros((1 + constraint_dim, real_theta_dim), dtype=torch.float, device=actor.device)
-	for head_idx in range(1 + constraint_dim):
-		_zero_actor_gradients(actor)
-		if policy_gradient_mode == "stochastic_pathwise":
-			action_for_grad = actor.sample_action_tensor(
-				state_batch_torch,
-				reparameterized=True,
-				use_mean=False,
-				track_log_std_grad=update_log_std,
+	critic_param_states = _freeze_critic_head_parameters(critic, constraint_dim)
+	try:
+		for head_idx in range(1 + constraint_dim):
+			_zero_actor_gradients(actor)
+			if policy_gradient_mode == "stochastic_pathwise":
+				action_for_grad = actor.sample_action_tensor(
+					state_batch_torch,
+					reparameterized=True,
+					use_mean=False,
+					track_log_std_grad=update_log_std,
+				)
+			else:
+				action_for_grad = actor.sample_action_tensor(
+					state_batch_torch,
+					reparameterized=False,
+					use_mean=True,
+					track_log_std_grad=update_log_std,
+				)
+			head_value = _critic_head_value(critic, state_batch_torch, action_for_grad, head_idx)
+			head_objective = torch.mean(head_value)
+			head_objective.backward()
+			grad_tilda_torch[head_idx] = _extract_actor_gradient(
+				actor,
+				real_theta_dim,
+				normalize_actor_gradient,
+				update_log_std,
 			)
-		else:
-			action_for_grad = actor.sample_action_tensor(
-				state_batch_torch,
-				reparameterized=False,
-				use_mean=True,
-				track_log_std_grad=update_log_std,
-			)
-		head_value = _critic_head_value(critic, state_batch_torch, action_for_grad, head_idx)
-		head_objective = torch.mean(head_value)
-		head_objective.backward()
-		grad_tilda_torch[head_idx] = _extract_actor_gradient(
-			actor,
-			real_theta_dim,
-			normalize_actor_gradient,
-			update_log_std,
-		)
+	finally:
+		_restore_parameter_grad_states(critic_param_states)
 	return grad_tilda_torch
 
 
@@ -317,16 +339,10 @@ def SLDAC_Pathwise_main(args, example_name):
 	run_tag = _get_run_tag(args)
 	checkpoint_interval_episodes = max(1, int(getattr(args, "checkpoint_interval_episodes", 10)))
 	save_final_checkpoint = _arg_to_bool(getattr(args, "save_final_checkpoint", True))
-	policy_gradient_mode, behavior_policy_mode, normalize_actor_gradient, update_log_std = _resolve_algorithm_modes(args)
+	policy_gradient_mode, behavior_policy_mode, normalize_actor_gradient, update_log_std, print_actor_grad_norm = _resolve_algorithm_modes(args)
 	total_episodes = int(getattr(args, "episode", 0))
 	if total_episodes <= 0:
 		total_episodes = int(getattr(args, "num_update_time", 0) / max(update_time_per_episode, 1))
-
-	print("algorithm:", PATHWISE_ALGORITHM_NAME)
-	print("policy_gradient_mode:", policy_gradient_mode)
-	print("behavior_policy_mode:", behavior_policy_mode)
-	print("normalize_actor_gradient:", normalize_actor_gradient)
-	print("update_log_std:", update_log_std)
 
 	reward_average_save = []
 	cost_average_save = []
@@ -435,7 +451,8 @@ def SLDAC_Pathwise_main(args, example_name):
 				)
 				grad = (1 - alpha) * grad + alpha * grad_tilda_torch.detach().cpu().numpy()
 				grad_norms = np.linalg.norm(grad_tilda_torch.detach().cpu().numpy(), axis=1)
-				print("actor_grad_norms:", grad_norms.tolist())
+				if print_actor_grad_norm:
+					print('actor_grad_norms: ', grad_norms.tolist())
 
 				paras_bar = update_policy(func_value, grad, paras_torch.detach().cpu().numpy(), tau_reward=tau_reward, tau_cost=tau_cost)
 				paras_bar_torch = torch.tensor(paras_bar, dtype=torch.float, device=device)

@@ -1,5 +1,11 @@
 import re
+import sys
 from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import matplotlib
 
@@ -10,9 +16,7 @@ import numpy as np
 from scipy.io import loadmat
 
 from artifact_paths import build_compare_artifact_path, resolve_algorithm_artifact_path
-
-
-BASE_DIR = Path(__file__).resolve().parent
+from plot_series_styles import apply_series_style
 
 # 绘图结果配置：脚本固定服务于 b100_q1，对外只暴露顶部配置区。
 RUN_TAG = "b100_q5"
@@ -61,8 +65,6 @@ PLOT_SERIES = [
         "reward_stem": f"Fused_CPRO_reward_{RUN_TAG}.mat",
         "cost_stem": f"Fused_CPRO_cost_{RUN_TAG}.mat",
         "rho_stem": f"Fused_CPRO_rho_{RUN_TAG}.mat",
-        "color": "#0072B2",
-        "marker": "o",
         "prefer_seed_suffix": True,
         "smooth_enable": FUSED_CPRO_SMOOTH_ENABLE,
         "smooth_window": FUSED_CPRO_SMOOTH_WINDOW,
@@ -73,8 +75,6 @@ PLOT_SERIES = [
     #     "reward_stem": f"HRL_reward_{RUN_TAG}.mat",
     #     "cost_stem": f"HRL_cost_{RUN_TAG}.mat",
     #     "rho_stem": f"HRL_rho_{RUN_TAG}.mat",
-    #     "color": "#E69F00",
-    #     "marker": "P",
     #     "prefer_seed_suffix": True,
     #     "objective_offset": HRL_OBJECTIVE_OFFSET,
     #     "cost_offset": HRL_COST_OFFSET,
@@ -87,8 +87,6 @@ PLOT_SERIES = [
         "reward_stem": f"PRCRL_reward_{RUN_TAG}.mat",
         "cost_stem": f"PRCRL_cost_{RUN_TAG}.mat",
         "rho_stem": f"PRCRL_rho_{RUN_TAG}.mat",
-        "color": "#8C564B",
-        "marker": "X",
         "prefer_seed_suffix": True,
         "objective_offset": PRCRL_OBJECTIVE_OFFSET,
         "cost_offset": PRCRL_COST_OFFSET,
@@ -100,8 +98,6 @@ PLOT_SERIES = [
         "artifact_group": "SLDAC",
         "reward_stem": f"SLDAC_reward_{RUN_TAG}.mat",
         "cost_stem": f"SLDAC_cost_{RUN_TAG}.mat",
-        "color": "#D55E00",
-        "marker": "s",
         "prefer_seed_suffix": True,
         "smooth_enable": SLDAC_SMOOTH_ENABLE,
         "smooth_window": SLDAC_SMOOTH_WINDOW,
@@ -111,8 +107,6 @@ PLOT_SERIES = [
     #     "artifact_group": "ACPO",
     #     "reward_stem": f"ACPO_reward_{RUN_TAG}.mat",
     #     "cost_stem": f"ACPO_cost_{RUN_TAG}.mat",
-    #     "color": "#009E73",
-    #     "marker": "*",
     #     "prefer_seed_suffix": True,
     # },
     # {
@@ -120,8 +114,6 @@ PLOT_SERIES = [
     #     "artifact_group": "DK",
     #     "reward_stem": f"DK_reward_{RUN_TAG}.mat",
     #     "cost_stem": f"DK_cost_{RUN_TAG}.mat",
-    #     "color": "#8C8C00",
-    #     "marker": "*",
     #     "prefer_seed_suffix": True,
     #     "smooth_enable": DK_SMOOTH_ENABLE,
     #     "smooth_window": DK_SMOOTH_WINDOW,
@@ -131,8 +123,6 @@ PLOT_SERIES = [
         "artifact_group": "SCAOPO",
         "reward_stem": "SCAOPO_reward_100.mat",
         "cost_stem": "SCAOPO_cost_100.mat",
-        "color": "#009E73",
-        "marker": "^",
         "prefer_seed_suffix": False,
         "smooth_enable": SCAOPO_SMOOTH_ENABLE,
         "smooth_window": SCAOPO_SMOOTH_WINDOW,
@@ -142,8 +132,6 @@ PLOT_SERIES = [
         "artifact_group": "ppo",
         "reward_stem": "reward_ppo_100.mat",
         "cost_stem": "cost_ppo_100.mat",
-        "color": "#CC79A7",
-        "marker": "D",
         "prefer_seed_suffix": False,
         "smooth_enable": PPO_SMOOTH_ENABLE,
         "smooth_window": PPO_SMOOTH_WINDOW,
@@ -153,13 +141,14 @@ PLOT_SERIES = [
         "artifact_group": "cpo",
         "reward_stem": "reward_cpo_100.mat",
         "cost_stem": "cost_cpo_100.mat",
-        "color": "#7E2F8E",
-        "marker": "v",
         "prefer_seed_suffix": False,
         "smooth_enable": CPO_SMOOTH_ENABLE,
         "smooth_window": CPO_SMOOTH_WINDOW,
     },
 ]
+
+# 统一图例文本、颜色与 marker，避免 MIMO / CLQR 漂移。
+PLOT_SERIES = [apply_series_style(series_config) for series_config in PLOT_SERIES]
 
 # 科研绘图样式：单栏尺寸、细网格、较高分辨率，适合论文直接引用。
 FIG_WIDTH = 4.6
