@@ -43,6 +43,13 @@ DEFAULT_CHECKPOINT_ROOT = "checkpoints/SLDAC_Pathwise"
 DEFAULT_CHECKPOINT_INTERVAL_EPISODES = 10
 DEFAULT_SAVE_FINAL_CHECKPOINT = True
 DEFAULT_SAVE_DIAGNOSTICS = True
+DEFAULT_USE_QPROP_DEDICATED_CRITIC = True
+DEFAULT_QPROP_CRITIC_UPDATE_STEPS = 1
+DEFAULT_QPROP_REPLAY_BATCH_SIZE = None
+DEFAULT_QPROP_TARGET_ACTION_MODE = "mean"
+DEFAULT_QPROP_CRITIC_LR_SCALE = 1.0
+DEFAULT_QPROP_TARGET_TAU_REWARD = None
+DEFAULT_QPROP_TARGET_TAU_COST = None
 
 EXAMPLE_NAME = "MIMO"
 ALGORITHM_NAME = "SLDAC_Pathwise"
@@ -213,6 +220,13 @@ def build_python_config():
         "checkpoint_interval_episodes": int(DEFAULT_CHECKPOINT_INTERVAL_EPISODES),
         "save_final_checkpoint": int(DEFAULT_SAVE_FINAL_CHECKPOINT),
         "save_diagnostics": int(DEFAULT_SAVE_DIAGNOSTICS),
+        "use_qprop_dedicated_critic": int(DEFAULT_USE_QPROP_DEDICATED_CRITIC),
+        "qprop_critic_update_steps": int(DEFAULT_QPROP_CRITIC_UPDATE_STEPS),
+        "qprop_replay_batch_size": DEFAULT_QPROP_REPLAY_BATCH_SIZE,
+        "qprop_target_action_mode": str(DEFAULT_QPROP_TARGET_ACTION_MODE),
+        "qprop_critic_lr_scale": float(DEFAULT_QPROP_CRITIC_LR_SCALE),
+        "qprop_target_tau_reward": DEFAULT_QPROP_TARGET_TAU_REWARD,
+        "qprop_target_tau_cost": DEFAULT_QPROP_TARGET_TAU_COST,
     }
 
 
@@ -244,6 +258,13 @@ def build_parser():
     parser.add_argument("--checkpoint_interval_episodes", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--save_final_checkpoint", type=int, choices=[0, 1], default=argparse.SUPPRESS)
     parser.add_argument("--save_diagnostics", type=int, choices=[0, 1], default=argparse.SUPPRESS)
+    parser.add_argument("--use_qprop_dedicated_critic", type=int, choices=[0, 1], default=argparse.SUPPRESS)
+    parser.add_argument("--qprop_critic_update_steps", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--qprop_replay_batch_size", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--qprop_target_action_mode", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--qprop_critic_lr_scale", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--qprop_target_tau_reward", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--qprop_target_tau_cost", type=float, default=argparse.SUPPRESS)
     return parser
 
 

@@ -1,6 +1,7 @@
 from environment import Environment_MIMO
 from environment import Environment_CLQR
 from critic_opt import Critic
+from qprop_critic import QPropCritic
 from utils import update_policy
 from model import GaussianPolicy_MIMO
 from model import GaussianPolicy_CLQR
@@ -38,6 +39,13 @@ CHECKPOINT_CONFIG_FIELDS = (
 	"update_log_std",
 	"print_actor_grad_norm",
 	"save_diagnostics",
+	"use_qprop_dedicated_critic",
+	"qprop_critic_update_steps",
+	"qprop_replay_batch_size",
+	"qprop_target_action_mode",
+	"qprop_critic_lr_scale",
+	"qprop_target_tau_reward",
+	"qprop_target_tau_cost",
 )
 
 
@@ -49,6 +57,22 @@ def _arg_to_bool(value):
 	if isinstance(value, str):
 		return value.strip().lower() not in {"", "0", "false", "no", "off"}
 	return bool(value)
+
+
+def _arg_to_optional_int(value):
+	if value is None:
+		return None
+	if isinstance(value, str) and value.strip().lower() in {"", "none", "null"}:
+		return None
+	return int(value)
+
+
+def _arg_to_optional_float(value):
+	if value is None:
+		return None
+	if isinstance(value, str) and value.strip().lower() in {"", "none", "null"}:
+		return None
+	return float(value)
 
 
 def _normalize_config_value(value):
@@ -198,6 +222,12 @@ def _critic_head_value(critic, state_batch_torch, action_batch_torch, head_idx):
 	return torch.squeeze(net.forward(state_batch_torch, action_batch_torch))
 
 
+def _control_critic_head_value(critic, state_batch_torch, action_batch_torch, head_idx):
+	if hasattr(critic, "head_value"):
+		return critic.head_value(head_idx, state_batch_torch, action_batch_torch, use_target=True)
+	return _critic_head_value(critic, state_batch_torch, action_batch_torch, head_idx).view(-1)
+
+
 def _empty_pathwise_diagnostics(head_count, constraint_dim):
 	return {
 		"q_mean": np.zeros(head_count, dtype=np.float64),
@@ -214,6 +244,15 @@ def _empty_pathwise_diagnostics(head_count, constraint_dim):
 		"score_signal_std": np.zeros(head_count, dtype=np.float64),
 		"control_signal_mean": np.zeros(head_count, dtype=np.float64),
 		"control_signal_std": np.zeros(head_count, dtype=np.float64),
+		"qprop_critic_loss": np.zeros(head_count, dtype=np.float64),
+		"qprop_critic_td_error_mean": np.zeros(head_count, dtype=np.float64),
+		"qprop_critic_target_mean": np.zeros(head_count, dtype=np.float64),
+		"qprop_critic_pred_mean": np.zeros(head_count, dtype=np.float64),
+		"qprop_replay_batch_size": 0.0,
+		"qprop_control_source_code": 0.0,
+		"qprop_target_action_mode_code": 0.0,
+		"qprop_pathwise_grad_ratio": np.zeros(head_count, dtype=np.float64),
+		"qprop_score_grad_ratio": np.zeros(head_count, dtype=np.float64),
 	}
 
 
@@ -238,6 +277,15 @@ def _pack_pathwise_diagnostics(diagnostics_history, constraint_dim):
 			"score_signal_std": np.zeros((0, head_count), dtype=np.float64),
 			"control_signal_mean": np.zeros((0, head_count), dtype=np.float64),
 			"control_signal_std": np.zeros((0, head_count), dtype=np.float64),
+			"qprop_critic_loss": np.zeros((0, head_count), dtype=np.float64),
+			"qprop_critic_td_error_mean": np.zeros((0, head_count), dtype=np.float64),
+			"qprop_critic_target_mean": np.zeros((0, head_count), dtype=np.float64),
+			"qprop_critic_pred_mean": np.zeros((0, head_count), dtype=np.float64),
+			"qprop_replay_batch_size": np.zeros((0,), dtype=np.float64),
+			"qprop_control_source_code": np.zeros((0,), dtype=np.float64),
+			"qprop_target_action_mode_code": np.zeros((0,), dtype=np.float64),
+			"qprop_pathwise_grad_ratio": np.zeros((0, head_count), dtype=np.float64),
+			"qprop_score_grad_ratio": np.zeros((0, head_count), dtype=np.float64),
 		}
 	return {
 		"update_index": np.asarray([item["update_index"] for item in diagnostics_history], dtype=np.int64),
@@ -260,6 +308,15 @@ def _pack_pathwise_diagnostics(diagnostics_history, constraint_dim):
 		"score_signal_std": np.asarray([item["score_signal_std"] for item in diagnostics_history], dtype=np.float64),
 		"control_signal_mean": np.asarray([item["control_signal_mean"] for item in diagnostics_history], dtype=np.float64),
 		"control_signal_std": np.asarray([item["control_signal_std"] for item in diagnostics_history], dtype=np.float64),
+		"qprop_critic_loss": np.asarray([item["qprop_critic_loss"] for item in diagnostics_history], dtype=np.float64),
+		"qprop_critic_td_error_mean": np.asarray([item["qprop_critic_td_error_mean"] for item in diagnostics_history], dtype=np.float64),
+		"qprop_critic_target_mean": np.asarray([item["qprop_critic_target_mean"] for item in diagnostics_history], dtype=np.float64),
+		"qprop_critic_pred_mean": np.asarray([item["qprop_critic_pred_mean"] for item in diagnostics_history], dtype=np.float64),
+		"qprop_replay_batch_size": np.asarray([item["qprop_replay_batch_size"] for item in diagnostics_history], dtype=np.float64),
+		"qprop_control_source_code": np.asarray([item["qprop_control_source_code"] for item in diagnostics_history], dtype=np.float64),
+		"qprop_target_action_mode_code": np.asarray([item["qprop_target_action_mode_code"] for item in diagnostics_history], dtype=np.float64),
+		"qprop_pathwise_grad_ratio": np.asarray([item["qprop_pathwise_grad_ratio"] for item in diagnostics_history], dtype=np.float64),
+		"qprop_score_grad_ratio": np.asarray([item["qprop_score_grad_ratio"] for item in diagnostics_history], dtype=np.float64),
 	}
 
 
@@ -306,7 +363,7 @@ def _compute_conservative_qprop_eta(score_signal, control_signal):
 
 
 def _compute_taylor_control_signal(critic, state_batch_torch, action_batch_torch, mu_torch, head_idx):
-	q_mu = _critic_head_value(critic, state_batch_torch, mu_torch, head_idx).view(-1)
+	q_mu = _control_critic_head_value(critic, state_batch_torch, mu_torch, head_idx).view(-1)
 	action_grad = torch.autograd.grad(
 		q_mu.sum(),
 		mu_torch,
@@ -336,7 +393,8 @@ def _extract_loss_gradient_norm(actor, loss, real_theta_dim, normalize_actor_gra
 
 def _compute_qprop_conservative_gradient(
 	actor,
-	critic,
+	score_critic,
+	control_critic,
 	state_batch_torch,
 	action_batch_torch,
 	q_behavior_all_torch,
@@ -346,10 +404,10 @@ def _compute_qprop_conservative_gradient(
 	update_log_std,
 	return_diagnostics,
 ):
-	score_signal = _preprocess_score_signal(critic.example_name, q_behavior_all_torch, head_idx)
+	score_signal = _preprocess_score_signal(score_critic.example_name, q_behavior_all_torch, head_idx)
 	mu_torch = actor.mean_action_tensor(state_batch_torch)
 	control_signal, q_mu, action_grad = _compute_taylor_control_signal(
-		critic,
+		control_critic,
 		state_batch_torch,
 		action_batch_torch,
 		mu_torch,
@@ -402,6 +460,9 @@ def _compute_qprop_conservative_gradient(
 		"control_signal_mean": float(torch.mean(control_signal.detach()).item()),
 		"control_signal_std": float(torch.std(control_signal.detach(), unbiased=False).item()),
 	}
+	grad_norm_denominator = float(score_grad_norm) + float(pathwise_grad_norm) + 1e-12
+	diagnostics["qprop_pathwise_grad_ratio"] = float(pathwise_grad_norm) / grad_norm_denominator
+	diagnostics["qprop_score_grad_ratio"] = float(score_grad_norm) / grad_norm_denominator
 	return actor_gradient, diagnostics
 
 
@@ -416,21 +477,33 @@ def _compute_pathwise_gradients(
 	normalize_actor_gradient,
 	update_log_std,
 	return_diagnostics=False,
+	qprop_control_critic=None,
+	qprop_control_source_code=0.0,
+	qprop_critic_diagnostics=None,
 ):
 	head_count = 1 + constraint_dim
 	grad_tilda_torch = torch.zeros((head_count, real_theta_dim), dtype=torch.float, device=actor.device)
 	diagnostics = _empty_pathwise_diagnostics(head_count, constraint_dim)
+	control_critic = qprop_control_critic if qprop_control_critic is not None else critic
 	critic_param_states = _freeze_critic_head_parameters(critic, constraint_dim)
+	control_critic_param_states = []
+	if policy_gradient_mode == "qprop_conservative" and control_critic is not critic:
+		control_critic_param_states = _freeze_critic_head_parameters(control_critic, constraint_dim)
 	try:
 		q_behavior_all_torch = None
 		if policy_gradient_mode == "qprop_conservative":
 			q_behavior_all_torch = _critic_all_head_values(critic, state_batch_torch, action_batch_torch, constraint_dim)
+			diagnostics["qprop_control_source_code"] = float(qprop_control_source_code)
+			if qprop_critic_diagnostics is not None:
+				for key, value in qprop_critic_diagnostics.items():
+					diagnostics[key] = value
 		for head_idx in range(head_count):
 			_zero_actor_gradients(actor)
 			if policy_gradient_mode == "qprop_conservative":
 				actor_gradient, qprop_diagnostics = _compute_qprop_conservative_gradient(
 					actor,
 					critic,
+					control_critic,
 					state_batch_torch,
 					action_batch_torch,
 					q_behavior_all_torch,
@@ -481,6 +554,7 @@ def _compute_pathwise_gradients(
 			if return_diagnostics:
 				diagnostics["actor_grad_norm"][head_idx] = float(torch.linalg.norm(actor_gradient.detach()).item())
 	finally:
+		_restore_parameter_grad_states(control_critic_param_states)
 		_restore_parameter_grad_states(critic_param_states)
 	if return_diagnostics:
 		objective_norm = diagnostics["actor_grad_norm"][0]
@@ -577,6 +651,17 @@ def SLDAC_Pathwise_main(args, example_name):
 	save_final_checkpoint = _arg_to_bool(getattr(args, "save_final_checkpoint", True))
 	save_diagnostics = _arg_to_bool(getattr(args, "save_diagnostics", True))
 	policy_gradient_mode, behavior_policy_mode, normalize_actor_gradient, update_log_std, print_actor_grad_norm = _resolve_algorithm_modes(args)
+	use_qprop_dedicated_critic = _arg_to_bool(getattr(args, "use_qprop_dedicated_critic", True))
+	qprop_critic_update_steps = max(1, int(getattr(args, "qprop_critic_update_steps", 1)))
+	qprop_replay_batch_size = _arg_to_optional_int(getattr(args, "qprop_replay_batch_size", None))
+	qprop_target_action_mode = _validate_choice(
+		"qprop_target_action_mode",
+		getattr(args, "qprop_target_action_mode", "mean"),
+		("mean",),
+	)
+	qprop_critic_lr_scale = float(getattr(args, "qprop_critic_lr_scale", 1.0))
+	qprop_target_tau_reward = _arg_to_optional_float(getattr(args, "qprop_target_tau_reward", None))
+	qprop_target_tau_cost = _arg_to_optional_float(getattr(args, "qprop_target_tau_cost", None))
 	total_episodes = int(getattr(args, "episode", 0))
 	if total_episodes <= 0:
 		total_episodes = int(getattr(args, "num_update_time", 0) / max(update_time_per_episode, 1))
@@ -587,6 +672,18 @@ def SLDAC_Pathwise_main(args, example_name):
 	env, actor, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(example_name, seed, device, grad_T)
 	buffer = DataStorage(T, num_new_data, state_dim, action_dim, constraint_dim, window, 1)
 	critic = Critic(example_name, grad_T, state_dim, action_dim, constraint_dim, Q_update_time, device)
+	qprop_critic = None
+	if policy_gradient_mode == "qprop_conservative" and use_qprop_dedicated_critic:
+		qprop_critic = QPropCritic(
+			example_name,
+			state_dim,
+			action_dim,
+			constraint_dim,
+			device,
+			qprop_lr_scale=qprop_critic_lr_scale,
+			qprop_target_tau_reward=qprop_target_tau_reward,
+			qprop_target_tau_cost=qprop_target_tau_cost,
+		)
 	paras_torch, real_theta_dim = _flatten_actor_parameters(actor)
 	func_value = np.zeros(constraint_dim + 1)
 	grad = np.zeros((constraint_dim + 1, real_theta_dim))
@@ -676,6 +773,22 @@ def SLDAC_Pathwise_main(args, example_name):
 			critic.critic_update(func_value, state_batch, action_batch, costs_batch, next_state_batch, next_action_batch, eta, gamma_reward, gamma_cost)
 
 			if Q_update_index == Q_update_time:
+				qprop_critic_diagnostics = None
+				if qprop_critic is not None:
+					qprop_critic_diagnostics = qprop_critic.update_from_replay(
+						func_value=func_value,
+						state_buffer=state_buffer,
+						action_buffer=action_buffer,
+						costs_buffer=costs_buffer,
+						next_state_buffer=next_state_buffer,
+						actor=actor,
+						batch_size=grad_T if qprop_replay_batch_size is None else qprop_replay_batch_size,
+						update_steps=qprop_critic_update_steps,
+						target_action_mode=qprop_target_action_mode,
+						tau_reward=gamma_reward if qprop_target_tau_reward is None else qprop_target_tau_reward,
+						tau_cost=gamma_cost if qprop_target_tau_cost is None else qprop_target_tau_cost,
+						rng=np.random,
+					)
 				update_index += 1
 				Q_update_index = 0
 				pathwise_gradient_result = _compute_pathwise_gradients(
@@ -689,6 +802,9 @@ def SLDAC_Pathwise_main(args, example_name):
 					normalize_actor_gradient,
 					update_log_std,
 					return_diagnostics=save_diagnostics,
+					qprop_control_critic=qprop_critic,
+					qprop_control_source_code=1.0 if qprop_critic is not None else 0.0,
+					qprop_critic_diagnostics=qprop_critic_diagnostics,
 				)
 				if save_diagnostics:
 					grad_tilda_torch, pathwise_diagnostics = pathwise_gradient_result

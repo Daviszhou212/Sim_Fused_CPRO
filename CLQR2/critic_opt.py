@@ -381,7 +381,7 @@ class Critic:
             Q_hat[:, 3] = self.target_net3.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy().reshape(-1)
             Q_hat[:, 4] = self.target_net4.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy().reshape(-1)
         else:
-            constraint_net = self.net1 if bool(legacy_online_mode) else self.target_net1
+            constraint_net = self.net1 if bool(legacy_online_mode) or (not hasattr(self, "target_net1")) else self.target_net1
             Q_hat[:, 1] = constraint_net.forward(state_batch_torch, action_batch_torch).detach().cpu().numpy().reshape(-1)
         Q_hat_torch = torch.tensor(Q_hat, dtype=torch.float, device=self.device)
 
