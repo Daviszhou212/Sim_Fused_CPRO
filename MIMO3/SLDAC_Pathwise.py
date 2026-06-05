@@ -13,7 +13,7 @@ import torch
 
 CHECKPOINT_SCHEMA_VERSION = 2
 PATHWISE_ALGORITHM_NAME = "SLDAC_Pathwise"
-POLICY_GRADIENT_MODES = ("stochastic_pathwise", "deterministic_dpg")
+POLICY_GRADIENT_MODES = ("stochastic_pathwise", "deterministic_dpg", "qprop_conservative")
 BEHAVIOR_POLICY_MODES = ("gaussian_sample", "mean_action")
 CHECKPOINT_CONFIG_FIELDS = (
 	"T",
@@ -37,6 +37,7 @@ CHECKPOINT_CONFIG_FIELDS = (
 	"normalize_actor_gradient",
 	"update_log_std",
 	"print_actor_grad_norm",
+	"save_diagnostics",
 )
 
 
@@ -197,6 +198,71 @@ def _critic_head_value(critic, state_batch_torch, action_batch_torch, head_idx):
 	return torch.squeeze(net.forward(state_batch_torch, action_batch_torch))
 
 
+def _empty_pathwise_diagnostics(head_count, constraint_dim):
+	return {
+		"q_mean": np.zeros(head_count, dtype=np.float64),
+		"q_std": np.zeros(head_count, dtype=np.float64),
+		"grad_a_norm": np.zeros(head_count, dtype=np.float64),
+		"actor_grad_norm": np.zeros(head_count, dtype=np.float64),
+		"constraint_to_objective_grad_norm_ratio": np.zeros(constraint_dim, dtype=np.float64),
+		"score_grad_norm": np.zeros(head_count, dtype=np.float64),
+		"pathwise_grad_norm": np.zeros(head_count, dtype=np.float64),
+		"combined_grad_norm": np.zeros(head_count, dtype=np.float64),
+		"qprop_eta": np.zeros(head_count, dtype=np.float64),
+		"qprop_covariance": np.zeros(head_count, dtype=np.float64),
+		"score_signal_mean": np.zeros(head_count, dtype=np.float64),
+		"score_signal_std": np.zeros(head_count, dtype=np.float64),
+		"control_signal_mean": np.zeros(head_count, dtype=np.float64),
+		"control_signal_std": np.zeros(head_count, dtype=np.float64),
+	}
+
+
+def _pack_pathwise_diagnostics(diagnostics_history, constraint_dim):
+	head_count = 1 + int(constraint_dim)
+	if not diagnostics_history:
+		return {
+			"update_index": np.zeros((0,), dtype=np.int64),
+			"global_step": np.zeros((0,), dtype=np.int64),
+			"episode_index": np.zeros((0,), dtype=np.int64),
+			"q_mean": np.zeros((0, head_count), dtype=np.float64),
+			"q_std": np.zeros((0, head_count), dtype=np.float64),
+			"grad_a_norm": np.zeros((0, head_count), dtype=np.float64),
+			"actor_grad_norm": np.zeros((0, head_count), dtype=np.float64),
+			"constraint_to_objective_grad_norm_ratio": np.zeros((0, int(constraint_dim)), dtype=np.float64),
+			"score_grad_norm": np.zeros((0, head_count), dtype=np.float64),
+			"pathwise_grad_norm": np.zeros((0, head_count), dtype=np.float64),
+			"combined_grad_norm": np.zeros((0, head_count), dtype=np.float64),
+			"qprop_eta": np.zeros((0, head_count), dtype=np.float64),
+			"qprop_covariance": np.zeros((0, head_count), dtype=np.float64),
+			"score_signal_mean": np.zeros((0, head_count), dtype=np.float64),
+			"score_signal_std": np.zeros((0, head_count), dtype=np.float64),
+			"control_signal_mean": np.zeros((0, head_count), dtype=np.float64),
+			"control_signal_std": np.zeros((0, head_count), dtype=np.float64),
+		}
+	return {
+		"update_index": np.asarray([item["update_index"] for item in diagnostics_history], dtype=np.int64),
+		"global_step": np.asarray([item["global_step"] for item in diagnostics_history], dtype=np.int64),
+		"episode_index": np.asarray([item["episode_index"] for item in diagnostics_history], dtype=np.int64),
+		"q_mean": np.asarray([item["q_mean"] for item in diagnostics_history], dtype=np.float64),
+		"q_std": np.asarray([item["q_std"] for item in diagnostics_history], dtype=np.float64),
+		"grad_a_norm": np.asarray([item["grad_a_norm"] for item in diagnostics_history], dtype=np.float64),
+		"actor_grad_norm": np.asarray([item["actor_grad_norm"] for item in diagnostics_history], dtype=np.float64),
+		"constraint_to_objective_grad_norm_ratio": np.asarray(
+			[item["constraint_to_objective_grad_norm_ratio"] for item in diagnostics_history],
+			dtype=np.float64,
+		),
+		"score_grad_norm": np.asarray([item["score_grad_norm"] for item in diagnostics_history], dtype=np.float64),
+		"pathwise_grad_norm": np.asarray([item["pathwise_grad_norm"] for item in diagnostics_history], dtype=np.float64),
+		"combined_grad_norm": np.asarray([item["combined_grad_norm"] for item in diagnostics_history], dtype=np.float64),
+		"qprop_eta": np.asarray([item["qprop_eta"] for item in diagnostics_history], dtype=np.float64),
+		"qprop_covariance": np.asarray([item["qprop_covariance"] for item in diagnostics_history], dtype=np.float64),
+		"score_signal_mean": np.asarray([item["score_signal_mean"] for item in diagnostics_history], dtype=np.float64),
+		"score_signal_std": np.asarray([item["score_signal_std"] for item in diagnostics_history], dtype=np.float64),
+		"control_signal_mean": np.asarray([item["control_signal_mean"] for item in diagnostics_history], dtype=np.float64),
+		"control_signal_std": np.asarray([item["control_signal_std"] for item in diagnostics_history], dtype=np.float64),
+	}
+
+
 def _freeze_critic_head_parameters(critic, constraint_dim):
 	previous_states = []
 	for head_idx in range(1 + constraint_dim):
@@ -212,21 +278,173 @@ def _restore_parameter_grad_states(previous_states):
 		para.requires_grad_(requires_grad)
 
 
+def _critic_all_head_values(critic, state_batch_torch, action_batch_torch, constraint_dim):
+	values = []
+	for head_idx in range(1 + int(constraint_dim)):
+		values.append(_critic_head_value(critic, state_batch_torch, action_batch_torch, head_idx).detach().view(-1))
+	return torch.stack(values, dim=1)
+
+
+def _preprocess_score_signal(example_name, q_values_torch, head_idx):
+	q_values_torch = q_values_torch.detach()
+	head_values = q_values_torch[:, int(head_idx)]
+	centered = head_values - torch.mean(head_values)
+	if "MIMO" in str(example_name):
+		return centered.detach()
+	objective_values = q_values_torch[:, 0]
+	objective_std = torch.std(objective_values, unbiased=False) + 1e-6
+	return (centered / objective_std).detach()
+
+
+def _compute_conservative_qprop_eta(score_signal, control_signal):
+	score_centered = score_signal.detach().view(-1) - torch.mean(score_signal.detach().view(-1))
+	control_centered = control_signal.detach().view(-1) - torch.mean(control_signal.detach().view(-1))
+	covariance = torch.mean(score_centered * control_centered)
+	eta_value = 1.0 if float(covariance.item()) > 0.0 else 0.0
+	eta = torch.tensor(eta_value, dtype=score_signal.dtype, device=score_signal.device)
+	return eta, covariance.detach()
+
+
+def _compute_taylor_control_signal(critic, state_batch_torch, action_batch_torch, mu_torch, head_idx):
+	q_mu = _critic_head_value(critic, state_batch_torch, mu_torch, head_idx).view(-1)
+	action_grad = torch.autograd.grad(
+		q_mu.sum(),
+		mu_torch,
+		retain_graph=True,
+		create_graph=False,
+		allow_unused=True,
+	)[0]
+	if action_grad is None:
+		action_grad = torch.zeros_like(mu_torch)
+	control_signal = torch.sum(action_grad.detach() * (action_batch_torch.detach() - mu_torch.detach()), dim=1)
+	return control_signal.detach(), q_mu, action_grad.detach()
+
+
+def _extract_loss_gradient_norm(actor, loss, real_theta_dim, normalize_actor_gradient, update_log_std):
+	_zero_actor_gradients(actor)
+	loss.backward(retain_graph=True)
+	grad_tmp = _extract_actor_gradient(
+		actor,
+		real_theta_dim,
+		normalize_actor_gradient,
+		update_log_std,
+	)
+	grad_norm = float(torch.linalg.norm(grad_tmp.detach()).item())
+	_zero_actor_gradients(actor)
+	return grad_norm
+
+
+def _compute_qprop_conservative_gradient(
+	actor,
+	critic,
+	state_batch_torch,
+	action_batch_torch,
+	q_behavior_all_torch,
+	head_idx,
+	real_theta_dim,
+	normalize_actor_gradient,
+	update_log_std,
+	return_diagnostics,
+):
+	score_signal = _preprocess_score_signal(critic.example_name, q_behavior_all_torch, head_idx)
+	mu_torch = actor.mean_action_tensor(state_batch_torch)
+	control_signal, q_mu, action_grad = _compute_taylor_control_signal(
+		critic,
+		state_batch_torch,
+		action_batch_torch,
+		mu_torch,
+		head_idx,
+	)
+	eta, covariance = _compute_conservative_qprop_eta(score_signal, control_signal)
+	log_prob = actor.evaluate_action(state_batch_torch, action_batch_torch)
+	score_residual_loss = torch.mean(log_prob * (score_signal - eta * control_signal).detach())
+	pathwise_control_loss = eta * torch.mean(q_mu)
+	combined_loss = score_residual_loss + pathwise_control_loss
+
+	score_grad_norm = 0.0
+	pathwise_grad_norm = 0.0
+	if return_diagnostics:
+		score_grad_norm = _extract_loss_gradient_norm(
+			actor,
+			score_residual_loss,
+			real_theta_dim,
+			normalize_actor_gradient,
+			update_log_std,
+		)
+		pathwise_grad_norm = _extract_loss_gradient_norm(
+			actor,
+			pathwise_control_loss,
+			real_theta_dim,
+			normalize_actor_gradient,
+			update_log_std,
+		)
+
+	_zero_actor_gradients(actor)
+	combined_loss.backward()
+	actor_gradient = _extract_actor_gradient(
+		actor,
+		real_theta_dim,
+		normalize_actor_gradient,
+		update_log_std,
+	)
+	diagnostics = {
+		"q_mean": float(torch.mean(q_behavior_all_torch[:, int(head_idx)].detach()).item()),
+		"q_std": float(torch.std(q_behavior_all_torch[:, int(head_idx)].detach(), unbiased=False).item()),
+		"grad_a_norm": float(torch.linalg.norm(action_grad.detach()).item()),
+		"actor_grad_norm": float(torch.linalg.norm(actor_gradient.detach()).item()),
+		"score_grad_norm": float(score_grad_norm),
+		"pathwise_grad_norm": float(pathwise_grad_norm),
+		"combined_grad_norm": float(torch.linalg.norm(actor_gradient.detach()).item()),
+		"qprop_eta": float(eta.detach().item()),
+		"qprop_covariance": float(covariance.detach().item()),
+		"score_signal_mean": float(torch.mean(score_signal.detach()).item()),
+		"score_signal_std": float(torch.std(score_signal.detach(), unbiased=False).item()),
+		"control_signal_mean": float(torch.mean(control_signal.detach()).item()),
+		"control_signal_std": float(torch.std(control_signal.detach(), unbiased=False).item()),
+	}
+	return actor_gradient, diagnostics
+
+
 def _compute_pathwise_gradients(
 	actor,
 	critic,
 	state_batch_torch,
+	action_batch_torch,
 	constraint_dim,
 	real_theta_dim,
 	policy_gradient_mode,
 	normalize_actor_gradient,
 	update_log_std,
+	return_diagnostics=False,
 ):
-	grad_tilda_torch = torch.zeros((1 + constraint_dim, real_theta_dim), dtype=torch.float, device=actor.device)
+	head_count = 1 + constraint_dim
+	grad_tilda_torch = torch.zeros((head_count, real_theta_dim), dtype=torch.float, device=actor.device)
+	diagnostics = _empty_pathwise_diagnostics(head_count, constraint_dim)
 	critic_param_states = _freeze_critic_head_parameters(critic, constraint_dim)
 	try:
-		for head_idx in range(1 + constraint_dim):
+		q_behavior_all_torch = None
+		if policy_gradient_mode == "qprop_conservative":
+			q_behavior_all_torch = _critic_all_head_values(critic, state_batch_torch, action_batch_torch, constraint_dim)
+		for head_idx in range(head_count):
 			_zero_actor_gradients(actor)
+			if policy_gradient_mode == "qprop_conservative":
+				actor_gradient, qprop_diagnostics = _compute_qprop_conservative_gradient(
+					actor,
+					critic,
+					state_batch_torch,
+					action_batch_torch,
+					q_behavior_all_torch,
+					head_idx,
+					real_theta_dim,
+					normalize_actor_gradient,
+					update_log_std,
+					return_diagnostics,
+				)
+				grad_tilda_torch[head_idx] = actor_gradient
+				if return_diagnostics:
+					for key, value in qprop_diagnostics.items():
+						diagnostics[key][head_idx] = value
+				continue
 			if policy_gradient_mode == "stochastic_pathwise":
 				action_for_grad = actor.sample_action_tensor(
 					state_batch_torch,
@@ -241,17 +459,33 @@ def _compute_pathwise_gradients(
 					use_mean=True,
 					track_log_std_grad=update_log_std,
 				)
+			if return_diagnostics and action_for_grad.requires_grad:
+				action_for_grad.retain_grad()
 			head_value = _critic_head_value(critic, state_batch_torch, action_for_grad, head_idx)
 			head_objective = torch.mean(head_value)
+			if return_diagnostics:
+				head_value_detached = head_value.detach().view(-1)
+				diagnostics["q_mean"][head_idx] = float(torch.mean(head_value_detached).item())
+				diagnostics["q_std"][head_idx] = float(torch.std(head_value_detached, unbiased=False).item())
 			head_objective.backward()
-			grad_tilda_torch[head_idx] = _extract_actor_gradient(
+			if return_diagnostics:
+				if getattr(action_for_grad, "grad", None) is not None:
+					diagnostics["grad_a_norm"][head_idx] = float(torch.linalg.norm(action_for_grad.grad.detach()).item())
+			actor_gradient = _extract_actor_gradient(
 				actor,
 				real_theta_dim,
 				normalize_actor_gradient,
 				update_log_std,
 			)
+			grad_tilda_torch[head_idx] = actor_gradient
+			if return_diagnostics:
+				diagnostics["actor_grad_norm"][head_idx] = float(torch.linalg.norm(actor_gradient.detach()).item())
 	finally:
 		_restore_parameter_grad_states(critic_param_states)
+	if return_diagnostics:
+		objective_norm = diagnostics["actor_grad_norm"][0]
+		diagnostics["constraint_to_objective_grad_norm_ratio"] = diagnostics["actor_grad_norm"][1:] / max(objective_norm, 1e-12)
+		return grad_tilda_torch, diagnostics
 	return grad_tilda_torch
 
 
@@ -341,6 +575,7 @@ def SLDAC_Pathwise_main(args, example_name):
 	run_tag = _get_run_tag(args)
 	checkpoint_interval_episodes = max(1, int(getattr(args, "checkpoint_interval_episodes", 10)))
 	save_final_checkpoint = _arg_to_bool(getattr(args, "save_final_checkpoint", True))
+	save_diagnostics = _arg_to_bool(getattr(args, "save_diagnostics", True))
 	policy_gradient_mode, behavior_policy_mode, normalize_actor_gradient, update_log_std, print_actor_grad_norm = _resolve_algorithm_modes(args)
 	total_episodes = int(getattr(args, "episode", 0))
 	if total_episodes <= 0:
@@ -348,6 +583,7 @@ def SLDAC_Pathwise_main(args, example_name):
 
 	reward_average_save = []
 	cost_average_save = []
+	diagnostics_history = []
 	env, actor, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(example_name, seed, device, grad_T)
 	buffer = DataStorage(T, num_new_data, state_dim, action_dim, constraint_dim, window, 1)
 	critic = Critic(example_name, grad_T, state_dim, action_dim, constraint_dim, Q_update_time, device)
@@ -442,16 +678,26 @@ def SLDAC_Pathwise_main(args, example_name):
 			if Q_update_index == Q_update_time:
 				update_index += 1
 				Q_update_index = 0
-				grad_tilda_torch = _compute_pathwise_gradients(
+				pathwise_gradient_result = _compute_pathwise_gradients(
 					actor,
 					critic,
 					state_batch_torch,
+					action_batch_torch,
 					constraint_dim,
 					real_theta_dim,
 					policy_gradient_mode,
 					normalize_actor_gradient,
 					update_log_std,
+					return_diagnostics=save_diagnostics,
 				)
+				if save_diagnostics:
+					grad_tilda_torch, pathwise_diagnostics = pathwise_gradient_result
+					pathwise_diagnostics["update_index"] = int(update_index)
+					pathwise_diagnostics["global_step"] = int(t)
+					pathwise_diagnostics["episode_index"] = int(print_index)
+					diagnostics_history.append(pathwise_diagnostics)
+				else:
+					grad_tilda_torch = pathwise_gradient_result
 				grad = (1 - alpha) * grad + alpha * grad_tilda_torch.detach().cpu().numpy()
 				grad_norms = np.linalg.norm(grad_tilda_torch.detach().cpu().numpy(), axis=1)
 				if print_actor_grad_norm:
@@ -464,4 +710,4 @@ def SLDAC_Pathwise_main(args, example_name):
 				if not update_log_std:
 					paras_torch, _ = _flatten_actor_parameters(actor)
 
-	return reward_average_save, cost_average_save
+	return reward_average_save, cost_average_save, _pack_pathwise_diagnostics(diagnostics_history, constraint_dim)

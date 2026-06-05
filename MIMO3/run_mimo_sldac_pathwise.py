@@ -16,14 +16,14 @@ from SLDAC_Pathwise import SLDAC_Pathwise_main
 
 # Fixed runs aligned with the current MIMO3 SLDAC entry.
 SLDAC_PATHWISE_RUNS = [
-    ("b100_q1", "SLDAC_Pathwise, batchsize=100, q=1", 500, 500, 100, 1),
+    ("b100_q1", "SLDAC_Pathwise, batchsize=100, q=1", 500, 500, 100, 10),
 ]
 
 # Top-level defaults shared by all active SLDAC_Pathwise runs.
 DEFAULT_SEED = 0
-DEFAULT_SEEDS = (0, 6, 7, 8, 9, 10)
+DEFAULT_SEEDS = (DEFAULT_SEED,)
 DEFAULT_WINDOW = 10000
-DEFAULT_EPISODE = 100
+DEFAULT_EPISODE = 20
 DEFAULT_UPDATE_TIME_PER_EPISODE = 10
 DEFAULT_NUM_UPDATE_TIME = DEFAULT_EPISODE * DEFAULT_UPDATE_TIME_PER_EPISODE
 DEFAULT_ALPHA_POW = 0.6
@@ -34,14 +34,15 @@ DEFAULT_GAMMA_POW_COST = 0.3
 DEFAULT_TAU_REWARD = 1.0
 DEFAULT_TAU_COST = 1.0
 DEFAULT_DEVICE = "cpu"
-DEFAULT_POLICY_GRADIENT_MODE = "stochastic_pathwise"
+DEFAULT_POLICY_GRADIENT_MODE = "deterministic_dpg"
 DEFAULT_BEHAVIOR_POLICY_MODE = "gaussian_sample"
 DEFAULT_NORMALIZE_ACTOR_GRADIENT = False
-DEFAULT_UPDATE_LOG_STD = True
+DEFAULT_UPDATE_LOG_STD = False
 DEFAULT_PRINT_ACTOR_GRAD_NORM = False
 DEFAULT_CHECKPOINT_ROOT = "checkpoints/SLDAC_Pathwise"
 DEFAULT_CHECKPOINT_INTERVAL_EPISODES = 10
 DEFAULT_SAVE_FINAL_CHECKPOINT = True
+DEFAULT_SAVE_DIAGNOSTICS = True
 
 EXAMPLE_NAME = "MIMO"
 ALGORITHM_NAME = "SLDAC_Pathwise"
@@ -140,7 +141,7 @@ def _run_single_seed(args):
             q_update_time,
         )
 
-        reward_save, cost_save = SLDAC_Pathwise_main(run_args, EXAMPLE_NAME)
+        reward_save, cost_save, diagnostics_save = SLDAC_Pathwise_main(run_args, EXAMPLE_NAME)
         _save_mat_with_seed(
             build_algorithm_artifact_path(
                 BASE_DIR,
@@ -152,6 +153,18 @@ def _run_single_seed(args):
             ALGORITHM_NAME,
             output_suffix,
         )
+        if int(getattr(run_args, "save_diagnostics", DEFAULT_SAVE_DIAGNOSTICS)):
+            _save_mat_with_seed(
+                build_algorithm_artifact_path(
+                    BASE_DIR,
+                    ALGORITHM_NAME,
+                    "SLDAC_Pathwise_diagnostics_{0}.mat".format(output_suffix),
+                ),
+                diagnostics_save,
+                run_args,
+                ALGORITHM_NAME,
+                output_suffix,
+            )
         _save_mat_with_seed(
             build_algorithm_artifact_path(
                 BASE_DIR,
@@ -199,6 +212,7 @@ def build_python_config():
         "checkpoint_root": str(DEFAULT_CHECKPOINT_ROOT),
         "checkpoint_interval_episodes": int(DEFAULT_CHECKPOINT_INTERVAL_EPISODES),
         "save_final_checkpoint": int(DEFAULT_SAVE_FINAL_CHECKPOINT),
+        "save_diagnostics": int(DEFAULT_SAVE_DIAGNOSTICS),
     }
 
 
@@ -229,6 +243,7 @@ def build_parser():
     parser.add_argument("--checkpoint_root", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--checkpoint_interval_episodes", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--save_final_checkpoint", type=int, choices=[0, 1], default=argparse.SUPPRESS)
+    parser.add_argument("--save_diagnostics", type=int, choices=[0, 1], default=argparse.SUPPRESS)
     return parser
 
 

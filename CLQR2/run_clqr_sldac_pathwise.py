@@ -42,6 +42,7 @@ DEFAULT_PRINT_ACTOR_GRAD_NORM = False
 DEFAULT_CHECKPOINT_ROOT = "checkpoints/SLDAC_Pathwise"
 DEFAULT_CHECKPOINT_INTERVAL_EPISODES = 10
 DEFAULT_SAVE_FINAL_CHECKPOINT = True
+DEFAULT_SAVE_DIAGNOSTICS = True
 
 EXAMPLE_NAME = "CLQR"
 ALGORITHM_NAME = "SLDAC_Pathwise"
@@ -74,6 +75,7 @@ def build_python_config():
         "checkpoint_root": str(DEFAULT_CHECKPOINT_ROOT),
         "checkpoint_interval_episodes": int(DEFAULT_CHECKPOINT_INTERVAL_EPISODES),
         "save_final_checkpoint": int(DEFAULT_SAVE_FINAL_CHECKPOINT),
+        "save_diagnostics": int(DEFAULT_SAVE_DIAGNOSTICS),
     }
 
 
@@ -149,7 +151,7 @@ def _run_single_seed(args):
         run_args.Q_update_time = int(q_update_time)
         run_args.MAX_STEPS = 2 * int(run_args.T) + int(run_args.num_update_time) * int(run_args.num_new_data)
 
-        reward_save, cost_save = SLDAC_Pathwise_main(run_args, EXAMPLE_NAME)
+        reward_save, cost_save, diagnostics_save = SLDAC_Pathwise_main(run_args, EXAMPLE_NAME)
         _save_mat_with_seed(
             build_algorithm_artifact_path(BASE_DIR, ALGORITHM_NAME, "SLDAC_Pathwise_reward_{0}.mat".format(run_tag)),
             {"array": reward_save},
@@ -157,6 +159,14 @@ def _run_single_seed(args):
             ALGORITHM_NAME,
             run_tag,
         )
+        if int(getattr(run_args, "save_diagnostics", DEFAULT_SAVE_DIAGNOSTICS)):
+            _save_mat_with_seed(
+                build_algorithm_artifact_path(BASE_DIR, ALGORITHM_NAME, "SLDAC_Pathwise_diagnostics_{0}.mat".format(run_tag)),
+                diagnostics_save,
+                run_args,
+                ALGORITHM_NAME,
+                run_tag,
+            )
         _save_mat_with_seed(
             build_algorithm_artifact_path(BASE_DIR, ALGORITHM_NAME, "SLDAC_Pathwise_cost_{0}.mat".format(run_tag)),
             {"array": cost_save},
@@ -190,6 +200,7 @@ def build_parser():
     parser.add_argument("--checkpoint_root", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--checkpoint_interval_episodes", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--save_final_checkpoint", type=int, choices=[0, 1], default=argparse.SUPPRESS)
+    parser.add_argument("--save_diagnostics", type=int, choices=[0, 1], default=argparse.SUPPRESS)
     return parser
 
 
