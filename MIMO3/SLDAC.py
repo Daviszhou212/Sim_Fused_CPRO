@@ -1,16 +1,24 @@
 from environment import Environment_MIMO
+from environment import Environment_MultiCellMIMO_CTDE
 from environment import Environment_CLQR
 from critic_opt import Critic
 from utils import update_policy
 from model import GaussianPolicy_MIMO
+from model import GaussianPolicy_MultiCellMIMO_CTDE
 from model import GaussianPolicy_CLQR
 from model import get_mimo_actor_hidden_dims
 from buffer import DataStorage
+from collections import deque
 import os
 import numpy as np
 import torch
 
 
+# CTDE 多小区 MIMO 默认场景配置；入口脚本可在 .py 顶部覆盖这些字段。
+CTDE_MIMO_DEFAULT_NT = 8
+CTDE_MIMO_DEFAULT_CELL_NUM = 3
+CTDE_MIMO_DEFAULT_USER_PER_CELL = 2
+CTDE_MIMO_DEFAULT_CONSTRAINT_LIMIT = 1.2
 CHECKPOINT_SCHEMA_VERSION = 2
 CHECKPOINT_CONFIG_FIELDS = (
 	"T",
@@ -29,6 +37,10 @@ CHECKPOINT_CONFIG_FIELDS = (
 	"gamma_pow_cost",
 	"tau_reward",
 	"tau_cost",
+	"Nt",
+	"num_cells",
+	"users_per_cell",
+	"constraint_limit",
 )
 
 
@@ -40,6 +52,11 @@ def _arg_to_bool(value):
 	if isinstance(value, str):
 		return value.strip().lower() not in {"", "0", "false", "no", "off"}
 	return bool(value)
+
+
+def _is_ctde_mimo(example_name):
+	text = str(example_name).upper()
+	return ("MIMO" in text) and ("CTDE" in text)
 
 
 def _normalize_config_value(value):
@@ -173,7 +190,33 @@ def SLDAC_main(args, example_name):
 
 	reward_average_save = []
 	cost_average_save = []
-	if 'MIMO' in example_name:
+	per_user_delay_average_save = []
+	return_per_user_delay = _arg_to_bool(getattr(args, "return_per_user_delay", False))
+	if _is_ctde_mimo(example_name):
+		Nt = int(getattr(args, "Nt", CTDE_MIMO_DEFAULT_NT))
+		cell_num = int(getattr(args, "num_cells", getattr(args, "cell_num", CTDE_MIMO_DEFAULT_CELL_NUM)))
+		user_per_cell = int(getattr(args, "users_per_cell", getattr(args, "user_per_cell", CTDE_MIMO_DEFAULT_USER_PER_CELL)))
+		constraint_limit = float(getattr(args, "constraint_limit", CTDE_MIMO_DEFAULT_CONSTRAINT_LIMIT))
+		env = Environment_MultiCellMIMO_CTDE(
+			seed=seed,
+			Nt=Nt,
+			cell_num=cell_num,
+			user_per_cell=user_per_cell,
+		)
+		state_dim = env.state_dim
+		action_dim = env.action_dim
+		constraint_dim = env.constraint_dim
+		constr_lim = constraint_limit * np.ones(constraint_dim)
+		actor = GaussianPolicy_MultiCellMIMO_CTDE(
+			state_dim,
+			action_dim,
+			device,
+			grad_T,
+			cell_num=cell_num,
+			user_per_cell=user_per_cell,
+			Nt=Nt,
+		)
+	elif 'MIMO' in example_name:
 		Nt, UE_num = 8, 4  # The number of antennas and users.
 		state_dim = 2 * UE_num * Nt + UE_num
 		action_dim = UE_num + 1
@@ -205,6 +248,7 @@ def SLDAC_main(args, example_name):
 	paras_torch[ind:] = actor.log_std  # comment this when using the Beta policy
 	func_value = np.zeros(constraint_dim + 1)
 	grad = np.zeros((constraint_dim + 1, real_theta_dim))
+	per_user_delay_window = deque(maxlen=int(window))
 
 	observation = env.reset()
 	update_index = 0
@@ -218,11 +262,15 @@ def SLDAC_main(args, example_name):
 		next_state = observation
 		costs = np.zeros(constraint_dim + 1)
 		costs[0] = reward
+		per_user_delay = np.zeros(constraint_dim)
 		for k in range(1, constraint_dim + 1):
-			costs[k] = (info.get('cost_' + str(k), info.get('cost', 0)) - constr_lim[k - 1])
+			delay_value = info.get('cost_' + str(k), info.get('cost', 0))
+			costs[k] = delay_value - constr_lim[k - 1]
+			per_user_delay[k - 1] = delay_value
 
 		aver_reward = reward
 		aver_cost = info.get('cost', 0) / constraint_dim
+		per_user_delay_window.append(per_user_delay)
 		buffer.store_experiences(state, action, costs, next_state, aver_reward, aver_cost)
 
 		# update the policy
@@ -249,6 +297,8 @@ def SLDAC_main(args, example_name):
 				print('cost_average: ', cost_average)
 				reward_average_save.append(reward_average)
 				cost_average_save.append(cost_average)
+				if return_per_user_delay:
+					per_user_delay_average_save.append(np.mean(np.asarray(per_user_delay_window), axis=0))
 				current_episode = print_index + 1
 				save_reason = None
 				if current_episode % checkpoint_interval_episodes == 0:
@@ -329,4 +379,6 @@ def SLDAC_main(args, example_name):
 					ind = ind + tmp
 				actor.log_std = paras_torch[ind:]  # comment this when using the Beta policy
 
+	if return_per_user_delay:
+		return reward_average_save, cost_average_save, np.asarray(per_user_delay_average_save, dtype=np.float64)
 	return reward_average_save, cost_average_save

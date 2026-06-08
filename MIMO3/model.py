@@ -8,6 +8,8 @@ EPS = 0.003
 DEFAULT_MIMO_ACTOR_HIDDEN_DIMS = (128, 128)
 # 旧 checkpoint 未记录结构时，按历史两层 128 口径解释。
 LEGACY_MIMO_ACTOR_HIDDEN_DIMS = (128, 128)
+# CTDE 多小区 MIMO 的共享本地 actor 隐藏层配置；所有小区复用同一组参数。
+DEFAULT_CTDE_MIMO_ACTOR_HIDDEN_DIMS = (128, 128)
 
 def fanin_init(size, fanin=None):
 	fanin = fanin or size[0]
@@ -44,6 +46,11 @@ def get_mimo_actor_hidden_dims(hidden_dims=None):
 
 def get_legacy_mimo_actor_hidden_dims():
 	return normalize_hidden_dims(LEGACY_MIMO_ACTOR_HIDDEN_DIMS, "legacy_mimo_actor_hidden_dims")
+
+
+def get_ctde_mimo_actor_hidden_dims(hidden_dims=None):
+	source = DEFAULT_CTDE_MIMO_ACTOR_HIDDEN_DIMS if hidden_dims is None else hidden_dims
+	return normalize_hidden_dims(source, "ctde_mimo_actor_hidden_dims")
 
 
 class Critic_net_MIMO(nn.Module):
@@ -229,6 +236,214 @@ class MLP_Gaussian_MIMO(nn.Module):
 		mu = getattr(self, self.output_layer_name)(x)
 		mu = 2.5 * torch.sigmoid(mu) # "if MIMO"
 		return mu
+
+
+class GaussianPolicy_MultiCellMIMO_CTDE(nn.Module):
+	"""Centralized-training/decentralized-execution Gaussian policy."""
+	def __init__(
+		self,
+		state_dim,
+		action_dim,
+		device,
+		num_new_data,
+		cell_num,
+		user_per_cell,
+		Nt,
+		hidden_dims=None,
+	):
+		super(GaussianPolicy_MultiCellMIMO_CTDE, self).__init__()
+		self.cell_num = int(cell_num)
+		self.num_cells = self.cell_num
+		self.user_per_cell = int(user_per_cell)
+		self.users_per_cell = self.user_per_cell
+		self.Nt = int(Nt)
+		self.cell_action_dim = self.user_per_cell + 1
+		self.local_state_dim = 2 * self.user_per_cell * self.Nt + self.user_per_cell
+		self.hidden_dims = get_ctde_mimo_actor_hidden_dims(hidden_dims)
+		self.fc1_dim = int(self.hidden_dims[0])
+		self.fc2_dim = int(self.hidden_dims[1]) if len(self.hidden_dims) > 1 else int(self.hidden_dims[0])
+		expected_action_dim = self.cell_num * self.cell_action_dim
+		if int(action_dim) != expected_action_dim:
+			raise ValueError(
+				"CTDE MIMO action_dim mismatch: expected {0}, got {1}".format(
+					expected_action_dim,
+					int(action_dim),
+				)
+			)
+		self.net = CTDE_MultiCell_MIMO_Net(
+			state_dim,
+			self.hidden_dims,
+			self.cell_num,
+			self.user_per_cell,
+			self.Nt,
+			device,
+		)
+		self.log_std = -0.5 * torch.ones(action_dim, dtype=torch.float, device=device)
+		self.action_dim = int(action_dim)
+		self.num_new_data = num_new_data
+		self.device = device
+		self.to(self.device)
+
+	def forward(self, state, action):
+		raise NotImplementedError
+
+	def mean_action_tensor(self, state_torch):
+		self.net.train()
+		return self.net(state_torch)
+
+	def sample_action_tensor(self, state_torch, reparameterized=False, use_mean=False, track_log_std_grad=True):
+		self.net.train()
+		self.log_std.requires_grad = bool(track_log_std_grad)
+		mu = self.net(state_torch)
+		if use_mean:
+			return mu
+		gaussian_ = torch.distributions.normal.Normal(mu, _expand_std(self.log_std, mu))
+		if reparameterized:
+			return gaussian_.rsample()
+		return gaussian_.sample()
+
+	def evaluate_action(self, state_torch, action_torch):
+		self.net.train()
+		self.log_std.requires_grad = True
+		mu = self.net(state_torch)
+		gaussian_ = torch.distributions.normal.Normal(mu, _expand_std(self.log_std, mu))
+		return gaussian_.log_prob(action_torch).sum(dim=1)
+
+	def sample_action(self, state, use_mean=False):
+		self.net.eval()
+		self.log_std.requires_grad = False
+		state_torch = torch.tensor(state, dtype=torch.float, device=self.device)
+		with torch.no_grad():
+			action = self.sample_action_tensor(
+				state_torch,
+				reparameterized=False,
+				use_mean=use_mean,
+				track_log_std_grad=False,
+			)
+		return action.detach().cpu().numpy()
+
+	def mean_cell_action_tensor(self, local_state_torch):
+		self.net.train()
+		return self.net.local_forward(local_state_torch)
+
+	def sample_cell_action(self, local_state, cell_index=0, use_mean=True):
+		# 分散执行接口：单个小区只依赖本地 CSI 和本地 delay。
+		self.net.eval()
+		local_state_torch = torch.tensor(local_state, dtype=torch.float, device=self.device)
+		with torch.no_grad():
+			mu = self.net.local_forward(local_state_torch)
+			if use_mean:
+				action = mu
+			else:
+				cell = int(cell_index)
+				if cell < 0 or cell >= self.cell_num:
+					raise ValueError("cell_index out of range: {0}".format(cell_index))
+				start = cell * self.cell_action_dim
+				end = start + self.cell_action_dim
+				std = torch.exp(self.log_std.detach()[start:end])
+				if mu.dim() > 1:
+					std = std.view(1, -1).expand(mu.shape[0], -1)
+				action = torch.distributions.normal.Normal(mu, std).sample()
+		return action.detach().cpu().numpy()
+
+
+class CTDE_MultiCell_MIMO_Net(nn.Module):
+	def __init__(self, state_dim, hidden_dims, cell_num, user_per_cell, Nt, device):
+		super(CTDE_MultiCell_MIMO_Net, self).__init__()
+		self.input_dim = int(state_dim)
+		self.hidden_dims = get_ctde_mimo_actor_hidden_dims(hidden_dims)
+		self.cell_num = int(cell_num)
+		self.user_per_cell = int(user_per_cell)
+		self.Nt = int(Nt)
+		self.local_state_dim = 2 * self.user_per_cell * self.Nt + self.user_per_cell
+		self.cell_action_dim = self.user_per_cell + 1
+		self.action_dim = self.cell_num * self.cell_action_dim
+		self.channel_size = self.cell_num * self.user_per_cell * self.cell_num * self.Nt
+		expected_state_dim = 2 * self.channel_size + self.cell_num * self.user_per_cell
+		if self.input_dim != expected_state_dim:
+			raise ValueError(
+				"CTDE MIMO state_dim mismatch: expected {0}, got {1}".format(
+					expected_state_dim,
+					self.input_dim,
+				)
+			)
+
+		self.hidden_layer_names = []
+		prev_dim = self.local_state_dim
+		for layer_idx, hidden_dim in enumerate(self.hidden_dims, start=1):
+			layer = nn.Linear(prev_dim, int(hidden_dim))
+			nn.init.orthogonal_(layer.weight.data, gain=np.sqrt(2))
+			nn.init.constant_(layer.bias.data, 0.0)
+			layer_name = "local_fc{0}".format(int(layer_idx))
+			setattr(self, layer_name, layer)
+			self.hidden_layer_names.append(layer_name)
+			prev_dim = int(hidden_dim)
+
+		self.output_layer_name = "local_fc{0}".format(int(len(self.hidden_dims) + 1))
+		output_layer = nn.Linear(prev_dim, self.cell_action_dim)
+		nn.init.orthogonal_(output_layer.weight.data, gain=np.sqrt(2))
+		nn.init.constant_(output_layer.bias.data, 0.0)
+		setattr(self, self.output_layer_name, output_layer)
+		self.device = device
+		self.to(self.device)
+
+	def _extract_local_states(self, state):
+		was_1d = state.dim() == 1
+		if was_1d:
+			state = state.view(1, -1)
+		batch_size = int(state.shape[0])
+		h_real = state[:, : self.channel_size].view(
+			batch_size,
+			self.cell_num,
+			self.user_per_cell,
+			self.cell_num,
+			self.Nt,
+		)
+		h_imag = state[:, self.channel_size : 2 * self.channel_size].view(
+			batch_size,
+			self.cell_num,
+			self.user_per_cell,
+			self.cell_num,
+			self.Nt,
+		)
+		delay = state[:, 2 * self.channel_size :].view(batch_size, self.cell_num, self.user_per_cell)
+		local_blocks = []
+		for cell in range(self.cell_num):
+			local_blocks.append(
+				torch.cat(
+					(
+						h_real[:, cell, :, cell, :].reshape(batch_size, -1),
+						h_imag[:, cell, :, cell, :].reshape(batch_size, -1),
+						delay[:, cell, :],
+					),
+					dim=1,
+				)
+			)
+		local_state = torch.stack(local_blocks, dim=1)
+		return local_state.reshape(batch_size * self.cell_num, self.local_state_dim), batch_size, was_1d
+
+	def local_forward(self, local_state):
+		was_1d = local_state.dim() == 1
+		if was_1d:
+			local_state = local_state.view(1, -1)
+		x = local_state
+		for layer_name in self.hidden_layer_names:
+			x = getattr(self, layer_name)(x)
+			x = torch.tanh(x)
+		mu = getattr(self, self.output_layer_name)(x)
+		mu = 2.5 * torch.sigmoid(mu)
+		if was_1d:
+			return mu.reshape(-1)
+		return mu
+
+	def forward(self, state):
+		local_state, batch_size, was_1d = self._extract_local_states(state)
+		cell_mu = self.local_forward(local_state).view(batch_size, self.cell_num, self.cell_action_dim)
+		joint_mu = cell_mu.reshape(batch_size, self.action_dim)
+		if was_1d:
+			return joint_mu.reshape(-1)
+		return joint_mu
+
 
 class GaussianPolicy_CLQR(nn.Module):
 	"""The class to realize the Gaussian policy.
