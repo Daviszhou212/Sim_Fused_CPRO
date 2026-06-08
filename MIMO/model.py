@@ -4,6 +4,16 @@ import torch.nn.functional as F
 import numpy as np
 
 EPS = 0.003
+# 动作变换的开区间下界；只用于策略分布，不复用初始化 EPS。
+ACTION_EPS = 1e-6
+# 反变换时的内部夹紧宽度，用于避免 logit/atanh/softplus inverse 的奇点。
+ACTION_INVERSE_EPS = 1e-6
+# MIMO power 维的动作上界。
+MIMO_POWER_MAX = 2.5
+# CLQR 动作的对称裁剪边界。
+CLQR_ACTION_MAX = 1.5
+# 当前 actor 概率分布版本，用于 checkpoint 记录与旧 checkpoint warning。
+ACTOR_DISTRIBUTION = "squashed_gaussian_v1"
 # MIMO actor 默认隐藏层配置；长度表示层数，元素值表示各层宽度。
 DEFAULT_MIMO_ACTOR_HIDDEN_DIMS = (128, 128)
 # 旧 checkpoint 未记录结构时，按历史两层 128 口径解释。
@@ -22,6 +32,110 @@ def _expand_std(log_std, reference_torch):
 	if reference_torch.dim() <= 1:
 		return std
 	return std.view(1, -1).expand(reference_torch.shape[0], -1)
+
+
+def _as_feature_mask(reference_torch, indices):
+	mask = torch.zeros(reference_torch.shape[-1], dtype=torch.bool, device=reference_torch.device)
+	if indices:
+		mask[list(indices)] = True
+	view_shape = [1] * reference_torch.dim()
+	view_shape[-1] = reference_torch.shape[-1]
+	return mask.view(*view_shape)
+
+
+def _default_mimo_reg_indices(action_dim):
+	return (int(action_dim) - 1,)
+
+
+def _softplus_inverse(positive_torch):
+	x = positive_torch.clamp_min(ACTION_INVERSE_EPS)
+	return x + torch.log(-torch.expm1(-x))
+
+
+def mimo_transform_raw_action(raw_action_torch, reg_indices=None):
+	reg_indices = _default_mimo_reg_indices(raw_action_torch.shape[-1]) if reg_indices is None else tuple(reg_indices)
+	reg_mask = _as_feature_mask(raw_action_torch, reg_indices)
+	power_action = ACTION_EPS + (MIMO_POWER_MAX - ACTION_EPS) * torch.sigmoid(raw_action_torch)
+	reg_action = F.softplus(raw_action_torch) + ACTION_EPS
+	return torch.where(reg_mask, reg_action, power_action)
+
+
+def mimo_inverse_action_and_log_det(action_torch, reg_indices=None, clamp_to_support=False):
+	reg_indices = _default_mimo_reg_indices(action_torch.shape[-1]) if reg_indices is None else tuple(reg_indices)
+	reg_mask = _as_feature_mask(action_torch, reg_indices)
+	power_valid = (action_torch > ACTION_EPS) & (action_torch < MIMO_POWER_MAX)
+	reg_valid = action_torch > ACTION_EPS
+	valid_per_dim = torch.where(reg_mask, reg_valid, power_valid)
+	valid = valid_per_dim.all(dim=-1)
+
+	power_action = action_torch.clamp(
+		min=ACTION_EPS + ACTION_INVERSE_EPS,
+		max=MIMO_POWER_MAX - ACTION_INVERSE_EPS,
+	)
+	power_z = (power_action - ACTION_EPS) / (MIMO_POWER_MAX - ACTION_EPS)
+	raw_power = torch.logit(power_z)
+	raw_reg = _softplus_inverse(action_torch - ACTION_EPS)
+	raw_action = torch.where(reg_mask, raw_reg, raw_power)
+
+	power_log_det = (
+		torch.log(torch.tensor(MIMO_POWER_MAX - ACTION_EPS, dtype=action_torch.dtype, device=action_torch.device))
+		+ F.logsigmoid(raw_action)
+		+ F.logsigmoid(-raw_action)
+	)
+	reg_log_det = -F.softplus(-raw_action)
+	log_det = torch.where(reg_mask, reg_log_det, power_log_det).sum(dim=-1)
+	if clamp_to_support:
+		valid = torch.ones_like(valid, dtype=torch.bool)
+	return raw_action, log_det, valid
+
+
+def mimo_transformed_gaussian_log_prob(raw_loc_torch, log_std_torch, action_torch, reg_indices=None, clamp_to_support=False):
+	raw_action, log_det, valid = mimo_inverse_action_and_log_det(
+		action_torch,
+		reg_indices=reg_indices,
+		clamp_to_support=clamp_to_support,
+	)
+	dist = torch.distributions.normal.Normal(raw_loc_torch, _expand_std(log_std_torch, raw_loc_torch))
+	log_prob = dist.log_prob(raw_action).sum(dim=-1) - log_det
+	log_prob = torch.where(valid, log_prob, torch.full_like(log_prob, -torch.inf))
+	if log_prob.dim() == 0:
+		return log_prob.view(1)
+	return log_prob
+
+
+def clqr_transform_raw_action(raw_action_torch):
+	return CLQR_ACTION_MAX * torch.tanh(raw_action_torch)
+
+
+def clqr_inverse_action_and_log_det(action_torch, clamp_to_support=False):
+	valid_per_dim = (action_torch > -CLQR_ACTION_MAX) & (action_torch < CLQR_ACTION_MAX)
+	valid = valid_per_dim.all(dim=-1)
+	scaled_action = (action_torch / CLQR_ACTION_MAX).clamp(
+		min=-1.0 + ACTION_INVERSE_EPS,
+		max=1.0 - ACTION_INVERSE_EPS,
+	)
+	raw_action = 0.5 * (torch.log1p(scaled_action) - torch.log1p(-scaled_action))
+	log_det_per_dim = (
+		torch.log(torch.tensor(CLQR_ACTION_MAX, dtype=action_torch.dtype, device=action_torch.device))
+		+ 2.0 * (np.log(2.0) - raw_action - F.softplus(-2.0 * raw_action))
+	)
+	log_det = log_det_per_dim.sum(dim=-1)
+	if clamp_to_support:
+		valid = torch.ones_like(valid, dtype=torch.bool)
+	return raw_action, log_det, valid
+
+
+def clqr_transformed_gaussian_log_prob(raw_loc_torch, log_std_torch, action_torch, clamp_to_support=False):
+	raw_action, log_det, valid = clqr_inverse_action_and_log_det(
+		action_torch,
+		clamp_to_support=clamp_to_support,
+	)
+	dist = torch.distributions.normal.Normal(raw_loc_torch, _expand_std(log_std_torch, raw_loc_torch))
+	log_prob = dist.log_prob(raw_action).sum(dim=-1) - log_det
+	log_prob = torch.where(valid, log_prob, torch.full_like(log_prob, -torch.inf))
+	if log_prob.dim() == 0:
+		return log_prob.view(1)
+	return log_prob
 
 
 def normalize_hidden_dims(hidden_dims, field_name="hidden_dims"):
@@ -51,6 +165,14 @@ def get_legacy_mimo_actor_hidden_dims():
 def get_ctde_mimo_actor_hidden_dims(hidden_dims=None):
 	source = DEFAULT_CTDE_MIMO_ACTOR_HIDDEN_DIMS if hidden_dims is None else hidden_dims
 	return normalize_hidden_dims(source, "ctde_mimo_actor_hidden_dims")
+
+
+def get_action_transform_metadata():
+	return {
+		"mimo_power": ["sigmoid_interval", ACTION_EPS, MIMO_POWER_MAX],
+		"mimo_reg": ["softplus_positive", ACTION_EPS],
+		"clqr": ["tanh_interval", -CLQR_ACTION_MAX, CLQR_ACTION_MAX],
+	}
 
 
 class Critic_net_MIMO(nn.Module):
@@ -162,27 +284,38 @@ class GaussianPolicy_MIMO(nn.Module):
 
 	def mean_action_tensor(self, state_torch):
 		self.net.train()
-		return self.net(state_torch)
+		return mimo_transform_raw_action(self.net(state_torch), reg_indices=self._reg_indices())
+
+	def evaluate_action_with_log_std(self, state_torch, action_torch, log_std_torch, clamp_to_support=False):
+		self.net.train()
+		return mimo_transformed_gaussian_log_prob(
+			self.net(state_torch),
+			log_std_torch,
+			action_torch,
+			reg_indices=self._reg_indices(),
+			clamp_to_support=clamp_to_support,
+		)
+
+	def _reg_indices(self):
+		return _default_mimo_reg_indices(self.action_dim)
 
 	def sample_action_tensor(self, state_torch, reparameterized=False, use_mean=False, track_log_std_grad=True):
 		self.net.train()
 		self.log_std.requires_grad = bool(track_log_std_grad)
-		mu = self.net(state_torch)
+		raw_loc = self.net(state_torch)
 		if use_mean:
-			return mu
-		gaussian_ = torch.distributions.normal.Normal(mu, _expand_std(self.log_std, mu))
+			return mimo_transform_raw_action(raw_loc, reg_indices=self._reg_indices())
+		gaussian_ = torch.distributions.normal.Normal(raw_loc, _expand_std(self.log_std, raw_loc))
 		if reparameterized:
-			return gaussian_.rsample()
-		return gaussian_.sample()
+			raw_action = gaussian_.rsample()
+		else:
+			raw_action = gaussian_.sample()
+		return mimo_transform_raw_action(raw_action, reg_indices=self._reg_indices())
 
 	def evaluate_action(self, state_torch, action_torch):
 		self.net.train()
 		self.log_std.requires_grad = True
-		mu = self.net(state_torch)
-		gaussian_ = torch.distributions.normal.Normal(mu, _expand_std(self.log_std, mu))
-		log_prob_action = gaussian_.log_prob(action_torch).sum(dim=1)
-
-		return log_prob_action
+		return self.evaluate_action_with_log_std(state_torch, action_torch, self.log_std)
 
 
 	def sample_action(self, state, use_mean=False):
@@ -234,7 +367,6 @@ class MLP_Gaussian_MIMO(nn.Module):
 			x = getattr(self, layer_name)(x)
 			x = torch.tanh(x)
 		mu = getattr(self, self.output_layer_name)(x)
-		mu = 2.5 * torch.sigmoid(mu) # "if MIMO"
 		return mu
 
 
@@ -289,25 +421,41 @@ class GaussianPolicy_MultiCellMIMO_CTDE(nn.Module):
 
 	def mean_action_tensor(self, state_torch):
 		self.net.train()
-		return self.net(state_torch)
+		return mimo_transform_raw_action(self.net(state_torch), reg_indices=self._reg_indices())
+
+	def evaluate_action_with_log_std(self, state_torch, action_torch, log_std_torch, clamp_to_support=False):
+		self.net.train()
+		return mimo_transformed_gaussian_log_prob(
+			self.net(state_torch),
+			log_std_torch,
+			action_torch,
+			reg_indices=self._reg_indices(),
+			clamp_to_support=clamp_to_support,
+		)
+
+	def _reg_indices(self):
+		return tuple(range(self.cell_action_dim - 1, self.action_dim, self.cell_action_dim))
+
+	def _cell_reg_indices(self):
+		return (self.cell_action_dim - 1,)
 
 	def sample_action_tensor(self, state_torch, reparameterized=False, use_mean=False, track_log_std_grad=True):
 		self.net.train()
 		self.log_std.requires_grad = bool(track_log_std_grad)
-		mu = self.net(state_torch)
+		raw_loc = self.net(state_torch)
 		if use_mean:
-			return mu
-		gaussian_ = torch.distributions.normal.Normal(mu, _expand_std(self.log_std, mu))
+			return mimo_transform_raw_action(raw_loc, reg_indices=self._reg_indices())
+		gaussian_ = torch.distributions.normal.Normal(raw_loc, _expand_std(self.log_std, raw_loc))
 		if reparameterized:
-			return gaussian_.rsample()
-		return gaussian_.sample()
+			raw_action = gaussian_.rsample()
+		else:
+			raw_action = gaussian_.sample()
+		return mimo_transform_raw_action(raw_action, reg_indices=self._reg_indices())
 
 	def evaluate_action(self, state_torch, action_torch):
 		self.net.train()
 		self.log_std.requires_grad = True
-		mu = self.net(state_torch)
-		gaussian_ = torch.distributions.normal.Normal(mu, _expand_std(self.log_std, mu))
-		return gaussian_.log_prob(action_torch).sum(dim=1)
+		return self.evaluate_action_with_log_std(state_torch, action_torch, self.log_std)
 
 	def sample_action(self, state, use_mean=False):
 		self.net.eval()
@@ -324,16 +472,16 @@ class GaussianPolicy_MultiCellMIMO_CTDE(nn.Module):
 
 	def mean_cell_action_tensor(self, local_state_torch):
 		self.net.train()
-		return self.net.local_forward(local_state_torch)
+		return mimo_transform_raw_action(self.net.local_forward(local_state_torch), reg_indices=self._cell_reg_indices())
 
 	def sample_cell_action(self, local_state, cell_index=0, use_mean=True):
 		# 分散执行接口：单个小区只依赖本地 CSI 和本地 delay。
 		self.net.eval()
 		local_state_torch = torch.tensor(local_state, dtype=torch.float, device=self.device)
 		with torch.no_grad():
-			mu = self.net.local_forward(local_state_torch)
+			raw_loc = self.net.local_forward(local_state_torch)
 			if use_mean:
-				action = mu
+				action = mimo_transform_raw_action(raw_loc, reg_indices=self._cell_reg_indices())
 			else:
 				cell = int(cell_index)
 				if cell < 0 or cell >= self.cell_num:
@@ -341,9 +489,10 @@ class GaussianPolicy_MultiCellMIMO_CTDE(nn.Module):
 				start = cell * self.cell_action_dim
 				end = start + self.cell_action_dim
 				std = torch.exp(self.log_std.detach()[start:end])
-				if mu.dim() > 1:
-					std = std.view(1, -1).expand(mu.shape[0], -1)
-				action = torch.distributions.normal.Normal(mu, std).sample()
+				if raw_loc.dim() > 1:
+					std = std.view(1, -1).expand(raw_loc.shape[0], -1)
+				raw_action = torch.distributions.normal.Normal(raw_loc, std).sample()
+				action = mimo_transform_raw_action(raw_action, reg_indices=self._cell_reg_indices())
 		return action.detach().cpu().numpy()
 
 
@@ -431,7 +580,6 @@ class CTDE_MultiCell_MIMO_Net(nn.Module):
 			x = getattr(self, layer_name)(x)
 			x = torch.tanh(x)
 		mu = getattr(self, self.output_layer_name)(x)
-		mu = 2.5 * torch.sigmoid(mu)
 		if was_1d:
 			return mu.reshape(-1)
 		return mu
@@ -464,27 +612,34 @@ class GaussianPolicy_CLQR(nn.Module):
 
 	def mean_action_tensor(self, state_torch):
 		self.net.train()
-		return self.net(state_torch)
+		return clqr_transform_raw_action(self.net(state_torch))
+
+	def evaluate_action_with_log_std(self, state_torch, action_torch, log_std_torch, clamp_to_support=False):
+		self.net.train()
+		return clqr_transformed_gaussian_log_prob(
+			self.net(state_torch),
+			log_std_torch,
+			action_torch,
+			clamp_to_support=clamp_to_support,
+		)
 
 	def sample_action_tensor(self, state_torch, reparameterized=False, use_mean=False, track_log_std_grad=True):
 		self.net.train()
 		self.log_std.requires_grad = bool(track_log_std_grad)
-		mu = self.net(state_torch)
+		raw_loc = self.net(state_torch)
 		if use_mean:
-			return mu
-		gaussian_ = torch.distributions.normal.Normal(mu, _expand_std(self.log_std, mu))
+			return clqr_transform_raw_action(raw_loc)
+		gaussian_ = torch.distributions.normal.Normal(raw_loc, _expand_std(self.log_std, raw_loc))
 		if reparameterized:
-			return gaussian_.rsample()
-		return gaussian_.sample()
+			raw_action = gaussian_.rsample()
+		else:
+			raw_action = gaussian_.sample()
+		return clqr_transform_raw_action(raw_action)
 
 	def evaluate_action(self, state_torch, action_torch):
 		self.net.train()
 		self.log_std.requires_grad = True
-		mu = self.net(state_torch)
-		gaussian_ = torch.distributions.normal.Normal(mu, _expand_std(self.log_std, mu))
-		log_prob_action = gaussian_.log_prob(action_torch).sum(dim=1)
-
-		return log_prob_action
+		return self.evaluate_action_with_log_std(state_torch, action_torch, self.log_std)
 
 
 	def sample_action(self, state, use_mean=False):

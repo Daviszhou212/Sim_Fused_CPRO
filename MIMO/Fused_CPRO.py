@@ -12,7 +12,9 @@ except Exception:
 from buffer import DataStorage
 from critic_opt import Critic
 from environment import Environment_CLQR, Environment_MIMO
-from model import GaussianPolicy_CLQR, GaussianPolicy_MIMO
+from model import ACTOR_DISTRIBUTION, GaussianPolicy_CLQR, GaussianPolicy_MIMO
+from model import clqr_inverse_action_and_log_det, mimo_inverse_action_and_log_det
+from model import get_legacy_mimo_actor_hidden_dims, get_mimo_actor_hidden_dims, normalize_hidden_dims
 
 
 # 策略库配置：每个场景固定使用 1 个 DK 策略 + 2 个镜像 SLDAC 策略。
@@ -101,11 +103,10 @@ def _build_costs(reward, info, constraint_dim, constr_lim):
 
 
 def _mean_action(actor, state):
-    actor.net.eval()
     state_torch = torch.tensor(state, dtype=torch.float, device=actor.device)
     with torch.no_grad():
-        mu = actor.net(state_torch)
-    return mu.detach().cpu().numpy().reshape(-1)
+        action = actor.mean_action_tensor(state_torch)
+    return action.detach().cpu().numpy().reshape(-1)
 
 
 def _sample_action(actor, state):
@@ -134,15 +135,12 @@ def _sample_hybrid_action_batch(state_batch, actor_new, old_policies, rho, actio
 def _log_prob_batch(actor, states_torch, actions_torch, require_grad):
     actor.net.train()
     with torch.set_grad_enabled(require_grad):
-        mu = actor.net(states_torch)
         log_std = actor.log_std
         if require_grad:
             log_std = log_std.detach().clone().requires_grad_(True)
         else:
             log_std = log_std.detach()
-        std = torch.exp(log_std).view(1, -1).repeat(states_torch.shape[0], 1)
-        dist = torch.distributions.normal.Normal(mu, std)
-        log_prob = dist.log_prob(actions_torch).sum(dim=1)
+        log_prob = actor.evaluate_action_with_log_std(states_torch, actions_torch, log_std)
     return log_prob, log_std
 
 
@@ -223,10 +221,7 @@ class FrozenActorPolicy:
 
     def log_prob_batch(self, states_torch, actions_torch):
         with torch.no_grad():
-            mu = self.actor.net(states_torch)
-            std = torch.exp(self.actor.log_std.detach()).view(1, -1).repeat(states_torch.shape[0], 1)
-            dist = torch.distributions.normal.Normal(mu, std)
-            return dist.log_prob(actions_torch).sum(dim=1)
+            return self.actor.evaluate_action(states_torch, actions_torch)
 
 
 def _build_old_policy_entry(policy, label, policy_seed):
@@ -246,11 +241,12 @@ def _build_old_policy_labels(old_policy_entries):
 
 
 class HeuristicGaussianPolicy:
-    def __init__(self, mean_fn, action_dim, device, log_std=DK_LOG_STD):
+    def __init__(self, mean_fn, action_dim, device, log_std=DK_LOG_STD, transform_kind="mimo"):
         self.mean_fn = mean_fn
         self.action_dim = int(action_dim)
         self.device = device
         self.log_std = torch.full((self.action_dim,), float(log_std), dtype=torch.float, device=device)
+        self.transform_kind = str(transform_kind).lower()
 
     def mean_action(self, state):
         return np.asarray(self.mean_fn(state), dtype=np.float64).reshape(-1)
@@ -263,9 +259,17 @@ class HeuristicGaussianPolicy:
         for idx in range(states_torch.shape[0]):
             means.append(self.mean_action(states_torch[idx].detach().cpu().numpy()))
         mu = torch.tensor(np.asarray(means, dtype=np.float64), dtype=torch.float, device=states_torch.device)
+        if self.transform_kind == "clqr":
+            raw_mu, _, _ = clqr_inverse_action_and_log_det(mu, clamp_to_support=True)
+            raw_action, log_det, _ = clqr_inverse_action_and_log_det(actions_torch, clamp_to_support=True)
+        elif self.transform_kind == "mimo":
+            raw_mu, _, _ = mimo_inverse_action_and_log_det(mu, clamp_to_support=True)
+            raw_action, log_det, _ = mimo_inverse_action_and_log_det(actions_torch, clamp_to_support=True)
+        else:
+            raise ValueError("unsupported DK transform_kind: {0}".format(self.transform_kind))
         std = torch.exp(self.log_std).view(1, -1).repeat(states_torch.shape[0], 1)
-        dist = torch.distributions.normal.Normal(mu, std)
-        return dist.log_prob(actions_torch).sum(dim=1)
+        dist = torch.distributions.normal.Normal(raw_mu, std)
+        return dist.log_prob(raw_action).sum(dim=1) - log_det
 
 
 def _clqr_stabilizing_gain(env, gain_scale=0.25, seed=0):
@@ -303,7 +307,7 @@ def _build_dk_policy(example_name, env, device, seed):
             reg = float(max(MIMO_DK_REG_BIAS, MIMO_REG_MIN))
             return np.concatenate((power.astype(np.float64), np.asarray([reg], dtype=np.float64)), axis=0)
 
-        return HeuristicGaussianPolicy(mimo_mean, env.action_dim, device)
+        return HeuristicGaussianPolicy(mimo_mean, env.action_dim, device, transform_kind="mimo")
 
     gain = _clqr_stabilizing_gain(env, gain_scale=0.25, seed=int(seed) + 17)
 
@@ -311,7 +315,7 @@ def _build_dk_policy(example_name, env, device, seed):
         action = -(gain @ _as_numpy(state))
         return np.clip(action, -CLQR_ACTION_MAX, CLQR_ACTION_MAX)
 
-    return HeuristicGaussianPolicy(clqr_mean, env.action_dim, device)
+    return HeuristicGaussianPolicy(clqr_mean, env.action_dim, device, transform_kind="clqr")
 
 
 def _policy_rollout_dataset(example_name, policy, steps, seed, device):
@@ -539,9 +543,13 @@ def _build_simplex_constraints(constr, paras_cvx, simplex_dim, rho_lower_bounds)
     return constr
 
 
-def _get_xi(update_index, decay_pow, xi0):
-    xi = float(xi0) / ((int(update_index) + 1) ** float(decay_pow))
+def _get_xi(episode_index, decay_pow, xi0):
+    xi = float(xi0) / ((int(episode_index) + 1) ** float(decay_pow))
     return min(max(xi, 0.0), 1.0)
+
+
+def _should_freeze_rho_update(episode_index, freeze_rho_episode_count):
+    return int(episode_index) < max(int(freeze_rho_episode_count), 0)
 
 
 def _build_policy_gradient_batch_impl(
@@ -908,10 +916,8 @@ def _q_head_normalize(q_hat):
     if q_hat.ndim != 2 or q_hat.shape[0] <= 0:
         return q_hat
     out = q_hat.copy()
-    reward_std = np.std(out[:, 0]) + 1e-6
-    out[:, 0] = (out[:, 0] - np.mean(out[:, 0])) / reward_std
-    for idx in range(1, out.shape[1]):
-        out[:, idx] = (out[:, idx] - np.mean(out[:, idx])) / reward_std
+    for idx in range(out.shape[1]):
+        out[:, idx] = out[:, idx] - np.mean(out[:, idx])
     return out
 
 
@@ -938,9 +944,7 @@ def _prcrl_q_head_normalize(q_hat):
     if q_hat.ndim != 2 or q_hat.shape[0] <= 0:
         return q_hat
     out = q_hat.copy()
-    reward_std = np.std(out[:, 0]) + 1e-6
-    out[:, 0] = (out[:, 0] - np.mean(out[:, 0])) / reward_std
-    for idx in range(1, out.shape[1]):
+    for idx in range(out.shape[1]):
         out[:, idx] = out[:, idx] - np.mean(out[:, idx])
     return out
 
@@ -978,8 +982,6 @@ def _normalize_run_tags(run_tags):
 
 def _get_checkpoint_root(args, checkpoint_root=None):
     root = checkpoint_root
-    if not root:
-        root = getattr(args, "old_policy_checkpoint_root", None)
     if not root:
         root = getattr(args, "checkpoint_root", os.path.join("checkpoints", "SLDAC"))
     if not root:
@@ -1035,6 +1037,13 @@ def _load_sldac_actor_checkpoint(
         checkpoint_root=checkpoint_root,
     )
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    if checkpoint.get("actor_distribution") != ACTOR_DISTRIBUTION or "action_transform" not in checkpoint:
+        print(
+            "warning: legacy checkpoint loaded under {0}; behavior is not equivalent: {1}".format(
+                ACTOR_DISTRIBUTION,
+                checkpoint_path,
+            )
+        )
 
     algorithm = str(checkpoint.get("algorithm", ""))
     checkpoint_example = str(checkpoint.get("example_name", ""))
@@ -1083,6 +1092,23 @@ def _load_sldac_actor_checkpoint(
     model = checkpoint.get("model", {})
     actor_state_dict = model.get("actor_state_dict")
     actor_log_std = model.get("actor_log_std")
+    if _is_mimo(example_name):
+        expected_hidden_dims = get_mimo_actor_hidden_dims()
+        checkpoint_hidden_dims_raw = model.get("actor_hidden_dims")
+        if checkpoint_hidden_dims_raw is None:
+            checkpoint_hidden_dims = get_legacy_mimo_actor_hidden_dims()
+        else:
+            checkpoint_hidden_dims = normalize_hidden_dims(
+                checkpoint_hidden_dims_raw,
+                "checkpoint actor_hidden_dims",
+            )
+        if tuple(checkpoint_hidden_dims) != tuple(expected_hidden_dims):
+            raise ValueError(
+                "checkpoint actor hidden_dims mismatch: expected {0}, got {1}".format(
+                    tuple(int(item) for item in expected_hidden_dims),
+                    tuple(int(item) for item in checkpoint_hidden_dims),
+                )
+            )
     if actor_state_dict is None:
         raise KeyError("checkpoint model.actor_state_dict is missing.")
     if actor_log_std is None:
@@ -1174,7 +1200,11 @@ def _train_sldac_like_actor(args, example_name, seed):
     update_time_per_episode = int(args.update_time_per_episode)
     max_steps = int(args.MAX_STEPS)
     alpha_pow = float(args.alpha_pow)
-    beta_pow = float(args.beta_pow)
+    beta_actor_pow = float(getattr(args, "beta_actor_pow", getattr(args, "beta_pow", 0.7)))
+    beta_rho_pow = float(getattr(args, "beta_rho_pow", beta_actor_pow))
+    xi0 = float(getattr(args, "xi0", DEFAULT_OFFLINE_WEIGHT))
+    if (xi0 < 0.0) or (xi0 > 1.0):
+        raise ValueError("xi0 must be in [0, 1] as offline weight. got xi0={0}".format(xi0))
     eta_pow = float(args.eta_pow)
     gamma_pow_reward = float(args.gamma_pow_reward)
     gamma_pow_cost = float(args.gamma_pow_cost)
@@ -1194,7 +1224,6 @@ def _train_sldac_like_actor(args, example_name, seed):
     update_index = 0
     q_update_index = 0
 
-    critic_interval = max(1, int(num_new_data / max(q_update_time, 1)))
     for t in range(max_steps):
         state = observation
         action = _sample_action(actor, state)
@@ -1204,10 +1233,11 @@ def _train_sldac_like_actor(args, example_name, seed):
         aver_cost = float(info.get("cost", 0.0)) / max(constraint_dim, 1)
         buffer.store_experiences(state, action, costs, next_state, float(reward), aver_cost)
 
-        if t > 2 * t_horizon and ((t - 2 * t_horizon) % critic_interval == 0):
+        if t > 2 * t_horizon and ((t - 2 * t_horizon) % (num_new_data / q_update_time) == 0):
             q_update_index += 1
             alpha = 1.0 / ((update_index + 1) ** alpha_pow)
-            beta = 1.0 / ((update_index + 1) ** beta_pow)
+            beta_actor = 1.0 / ((update_index + 1) ** beta_actor_pow)
+            beta_rho = 1.0 / ((update_index + 1) ** beta_rho_pow)
             eta = 1.0 / ((update_index + 1) ** eta_pow)
             if q_update_index == q_update_time:
                 gamma_reward = 1.0 / ((update_index + 1) ** gamma_pow_reward)
@@ -1265,45 +1295,29 @@ def _build_old_policy_library(args, example_name, main_env, device, state_dim, a
         )
     ]
     run_tags = _normalize_run_tags(getattr(args, "old_policy_run_tags", None))
-    if run_tags:
-        pretrain_episode = int(
-            getattr(
-                args,
-                "old_policy_pretrain_episode",
-                getattr(args, "pretrain_episode", 0),
-            )
-        )
-        if pretrain_episode <= 0:
-            raise ValueError("old_policy_pretrain_episode must be a positive integer when old policies are configured.")
-        for run_tag in run_tags:
-            old_policy_entries.append(
-                _build_old_policy_entry(
-                    _load_old_policy_from_checkpoint(
-                        args,
-                        example_name,
-                        run_tag,
-                        pretrain_episode,
-                        old_policy_seed,
-                        device,
-                        int(args.grad_T),
-                        state_dim,
-                        action_dim,
-                        constraint_dim,
-                    ),
-                    run_tag,
-                    old_policy_seed,
-                )
-            )
+    if not run_tags:
+        print("old_policy_run_tags is empty: use DK-only library.")
         return old_policy_entries
-
-    for idx in range(NUM_SLDAC_LIBRARY_POLICIES):
-        policy_seed = seed + 101 * (idx + 1)
-        actor = _train_sldac_like_actor(args, example_name, policy_seed)
+    pretrain_episode = int(getattr(args, "pretrain_episode", 0))
+    if pretrain_episode <= 0:
+        raise ValueError("pretrain_episode must be a positive integer.")
+    for run_tag in run_tags:
         old_policy_entries.append(
             _build_old_policy_entry(
-                FrozenActorPolicy(actor),
-                "sldac_like_{0}".format(idx + 1),
-                policy_seed,
+                _load_old_policy_from_checkpoint(
+                    args,
+                    example_name,
+                    run_tag,
+                    pretrain_episode,
+                    old_policy_seed,
+                    device,
+                    int(args.grad_T),
+                    state_dim,
+                    action_dim,
+                    constraint_dim,
+                ),
+                run_tag,
+                old_policy_seed,
             )
         )
     return old_policy_entries
@@ -1341,6 +1355,7 @@ def _select_policy_gradient_batch(
     use_offline_data,
     dataset_probs=None,
 ):
+    # HRL 分支固定只使用在线样本；Fused-CPRO 保持在线/离线混合更新。
     return _build_policy_gradient_batch_impl(
         online_state_batch,
         online_action_batch,
@@ -1354,18 +1369,53 @@ def _select_policy_gradient_batch(
     )
 
 
-def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, return_aux):
+def _select_policy_gradient_batch_impl(
+    online_state_batch,
+    online_action_batch,
+    offline_datasets,
+    xi,
+    grad_t,
+    state_dim,
+    action_dim,
+    use_offline_data,
+    dataset_probs=None,
+):
+    # HRL keeps the policy-gradient batch purely online.
+    return _build_policy_gradient_batch_impl(
+        online_state_batch,
+        online_action_batch,
+        offline_datasets,
+        xi,
+        grad_t,
+        state_dim,
+        action_dim,
+        use_offline_data,
+        dataset_probs=dataset_probs,
+    )
+
+
+def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data):
     seed = int(getattr(args, "seed", 0))
     _set_seed(seed)
-    device = "cpu"
+    device = str(getattr(args, "device", "cpu")).lower()
+    if device == "cuda" and (not torch.cuda.is_available()):
+        device = "cpu"
 
     t_horizon = int(args.T)
     grad_t = int(args.grad_T)
     num_new_data = int(args.num_new_data)
+    episode = int(args.episode)
     update_time_per_episode = int(args.update_time_per_episode)
+    freeze_rho_episode_count = int(getattr(args, "freeze_rho_episode_count", 0))
+    if freeze_rho_episode_count < 0:
+        raise ValueError(
+            "freeze_rho_episode_count must be a non-negative integer. got freeze_rho_episode_count={0}".format(
+                freeze_rho_episode_count
+            )
+        )
     max_steps = int(args.MAX_STEPS)
     alpha_pow = float(args.alpha_pow)
-    beta_actor_pow = float(getattr(args, "beta_actor_pow", getattr(args, "beta_pow", 0.8)))
+    beta_actor_pow = float(getattr(args, "beta_actor_pow", getattr(args, "beta_pow", 0.7)))
     rho_scheduler_config = _build_rho_scheduler_config(args, beta_actor_pow)
     legacy_xi0 = float(getattr(args, "xi0", DEFAULT_OFFLINE_WEIGHT))
     legacy_xi_pow = float(getattr(args, "xi_pow", rho_scheduler_config["xi_pow"]))
@@ -1437,7 +1487,6 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
     update_index = 0
     print_index = 0
     q_update_index = 0
-    critic_interval = max(1, int(num_new_data / max(q_update_time, 1)))
     critic_anchor = critic.flatten_parameters(include_target=True).copy()
 
     for t in range(max_steps):
@@ -1449,19 +1498,22 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
         aver_cost = float(info.get("cost", 0.0)) / max(constraint_dim, 1)
         buffer.store_experiences(state, action, costs, next_state, float(reward), aver_cost)
 
-        if t > 2 * t_horizon and ((t - 2 * t_horizon) % critic_interval == 0):
+        if t > 2 * t_horizon and ((t - 2 * t_horizon) % (num_new_data / q_update_time) == 0):
             q_update_index += 1
             alpha = 1.0 / ((update_index + 1) ** alpha_pow)
             beta_actor = 1.0 / ((update_index + 1) ** beta_actor_pow)
             beta_rho = _get_rho_beta(update_index, rho_scheduler_config)
-            eta = 1.0 / ((update_index + 1) ** eta_pow)
+            episode_index = _resolve_episode_from_update(update_index, update_time_per_episode, episode)
+            freeze_rho_update = _should_freeze_rho_update(episode_index, freeze_rho_episode_count)
             if use_offline_data:
-                actor_xi = _get_xi(update_index, actor_xi_pow, actor_xi0)
+                # MIMO3 keeps actor_xi constant within one episode, while critic_xi decays per update.
+                actor_xi = _get_xi(episode_index, actor_xi_pow, actor_xi0)
                 critic_xi = _get_xi(update_index, critic_xi_pow, critic_xi0)
             else:
                 actor_xi = 0.0
                 critic_xi = 0.0
             critic_legacy_mode = _use_legacy_critic_mode(use_offline_data, critic_xi)
+            eta = 1.0 / ((update_index + 1) ** eta_pow)
             if q_update_index == q_update_time:
                 gamma_reward = 1.0 / ((update_index + 1) ** gamma_pow_reward)
                 gamma_cost = 1.0 / ((update_index + 1) ** gamma_pow_cost)
@@ -1492,6 +1544,13 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
                 cost_average_save.append(float(np.mean(aver_cost_buffer)))
                 rho_history_save.append(np.asarray(rho, dtype=np.float64).copy())
                 print(_format_rho_debug_line(rho_labels, rho))
+                if freeze_rho_update:
+                    print(
+                        "rho_update_frozen: episode {0}/{1}".format(
+                            int(episode_index + 1),
+                            int(freeze_rho_episode_count),
+                        )
+                    )
                 if use_offline_data:
                     actor_xi_history_save.append(float(actor_xi))
                     critic_xi_history_save.append(float(critic_xi))
@@ -1552,10 +1611,10 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
             if q_update_index == q_update_time:
                 update_index += 1
                 q_update_index = 0
-
                 critic_now = critic.flatten_parameters(include_target=True).copy()
                 critic_drift = _rms_drift(critic_now, critic_anchor)
-                fused_state_batch, fused_action_batch = _select_policy_gradient_batch(
+
+                fused_state_batch, fused_action_batch = _select_policy_gradient_batch_impl(
                     online_state_batch,
                     online_action_batch,
                     offline_datasets,
@@ -1635,43 +1694,45 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
                     simplex_dim=rho.size,
                     rho_lower_bounds=rho_lower_bounds,
                 )
-                rho_before = np.asarray(rho, dtype=np.float64).copy()
                 rho_bar = theta_bar[:rho.size]
                 actor_bar = theta_bar[rho.size:]
                 rho_next = (1.0 - beta_rho) * rho + beta_rho * rho_bar
                 actor_next = (1.0 - beta_actor) * actor_now + beta_actor * actor_bar
-                rho_applied = _normalize_simplex(rho_next, rho_lower_bounds)
-
-                drift_update_index_save.append(int(update_index))
+                if freeze_rho_update:
+                    rho_applied = np.asarray(rho, dtype=np.float64).copy()
+                else:
+                    rho_applied = _normalize_simplex(rho_next, rho_lower_bounds)
                 actor_drift_save.append(_rms_drift(actor_next, actor_now))
-                rho_drift_save.append(_rms_drift(rho_applied, rho_before))
                 critic_drift_save.append(critic_drift)
+                rho_drift_save.append(_rms_drift(rho_applied, rho))
+                drift_update_index_save.append(int(update_index))
                 critic_anchor = critic_now
                 rho = rho_applied
                 _set_actor_from_flat(actor_new, actor_next)
 
-    if not return_aux:
-        return reward_average_save, cost_average_save
-
-    rho_history = np.asarray(rho_history_save, dtype=np.float64)
-    if rho_history.size <= 0:
-        rho_history = np.zeros((0, len(rho_labels)), dtype=np.float64)
-    elif rho_history.ndim == 1:
-        rho_history = rho_history.reshape(1, -1)
-    xi_history = _pack_xi_history(actor_xi_history_save, critic_xi_history_save)
     drift_history = {
-        "update_index": np.asarray(drift_update_index_save, dtype=np.int32).reshape(-1),
-        "actor_rms": np.asarray(actor_drift_save, dtype=np.float64).reshape(-1),
-        "critic_rms": np.asarray(critic_drift_save, dtype=np.float64).reshape(-1),
-        "rho_rms": np.asarray(rho_drift_save, dtype=np.float64).reshape(-1),
+        "update_index": np.asarray(drift_update_index_save, dtype=np.int32),
+        "actor_rms": np.asarray(actor_drift_save, dtype=np.float64),
+        "critic_rms": np.asarray(critic_drift_save, dtype=np.float64),
+        "rho_rms": np.asarray(rho_drift_save, dtype=np.float64),
     }
-    return reward_average_save, cost_average_save, rho_history, xi_history, rho_labels, drift_history
+
+    return (
+        reward_average_save,
+        cost_average_save,
+        np.asarray(rho_history_save, dtype=np.float64),
+        _pack_xi_history(actor_xi_history_save, critic_xi_history_save),
+        rho_labels,
+        drift_history,
+    )
 
 
-def _run_prcrl_main(args, example_name, return_aux):
+def _run_prcrl_main(args, example_name):
     seed = int(getattr(args, "seed", 0))
     _set_seed(seed)
-    device = "cpu"
+    device = str(getattr(args, "device", "cpu")).lower()
+    if device == "cuda" and (not torch.cuda.is_available()):
+        device = "cpu"
 
     t_horizon = int(args.T)
     grad_t = int(args.grad_T)
@@ -1685,10 +1746,18 @@ def _run_prcrl_main(args, example_name, return_aux):
     num_new_data = int(args.num_new_data)
     if num_new_data <= 0:
         raise ValueError("num_new_data must be positive for PRCRL.")
+    episode = int(args.episode)
     update_time_per_episode = int(args.update_time_per_episode)
+    freeze_rho_episode_count = int(getattr(args, "freeze_rho_episode_count", 0))
+    if freeze_rho_episode_count < 0:
+        raise ValueError(
+            "freeze_rho_episode_count must be a non-negative integer. got freeze_rho_episode_count={0}".format(
+                freeze_rho_episode_count
+            )
+        )
     max_steps = int(args.MAX_STEPS)
     alpha_pow = float(args.alpha_pow)
-    beta_actor_pow = float(getattr(args, "beta_actor_pow", getattr(args, "beta_pow", 0.8)))
+    beta_actor_pow = float(getattr(args, "beta_actor_pow", getattr(args, "beta_pow", 0.7)))
     rho_scheduler_config = _build_rho_scheduler_config(args, beta_actor_pow)
     tau_reward = float(args.tau_reward)
     tau_cost = float(args.tau_cost)
@@ -1755,6 +1824,8 @@ def _run_prcrl_main(args, example_name, return_aux):
         alpha = 1.0 / ((update_index + 1) ** alpha_pow)
         beta_actor = 1.0 / ((update_index + 1) ** beta_actor_pow)
         beta_rho = _get_rho_beta(update_index, rho_scheduler_config)
+        episode_index = _resolve_episode_from_update(update_index, update_time_per_episode, episode)
+        freeze_rho_update = _should_freeze_rho_update(episode_index, freeze_rho_episode_count)
 
         state_buffer, action_buffer, costs_buffer, next_state_buffer, aver_reward_buffer, aver_cost_buffer = buffer.take_experiences()
         func_value_tilda = np.mean(costs_buffer, axis=0)
@@ -1768,6 +1839,13 @@ def _run_prcrl_main(args, example_name, return_aux):
             cost_average_save.append(float(np.mean(aver_cost_buffer)))
             rho_history_save.append(np.asarray(rho, dtype=np.float64).copy())
             print(_format_rho_debug_line(rho_labels, rho))
+            if freeze_rho_update:
+                print(
+                    "rho_update_frozen: episode {0}/{1}".format(
+                        int(episode_index + 1),
+                        int(freeze_rho_episode_count),
+                    )
+                )
             print_index += 1
 
         q_hat = _prcrl_window_q_hat(costs_buffer, func_value, t_horizon)
@@ -1809,7 +1887,10 @@ def _run_prcrl_main(args, example_name, return_aux):
         actor_bar = theta_bar[rho.size:]
         rho_next = (1.0 - beta_rho) * rho + beta_rho * rho_bar
         actor_next = (1.0 - beta_actor) * actor_now + beta_actor * actor_bar
-        rho_applied = _normalize_simplex(rho_next, rho_lower_bounds)
+        if freeze_rho_update:
+            rho_applied = np.asarray(rho, dtype=np.float64).copy()
+        else:
+            rho_applied = _normalize_simplex(rho_next, rho_lower_bounds)
 
         update_index += 1
         drift_update_index_save.append(int(update_index))
@@ -1818,41 +1899,66 @@ def _run_prcrl_main(args, example_name, return_aux):
         rho = rho_applied
         _set_actor_from_flat(actor_new, actor_next)
 
-    if not return_aux:
-        return reward_average_save, cost_average_save
-
     rho_history = np.asarray(rho_history_save, dtype=np.float64)
     if rho_history.size <= 0:
         rho_history = np.zeros((0, len(rho_labels)), dtype=np.float64)
     elif rho_history.ndim == 1:
         rho_history = rho_history.reshape(1, -1)
+
     drift_history = {
-        "update_index": np.asarray(drift_update_index_save, dtype=np.int32).reshape(-1),
-        "actor_rms": np.asarray(actor_drift_save, dtype=np.float64).reshape(-1),
+        "update_index": np.asarray(drift_update_index_save, dtype=np.int32),
+        "actor_rms": np.asarray(actor_drift_save, dtype=np.float64),
         "critic_rms": np.zeros((0,), dtype=np.float64),
-        "rho_rms": np.asarray(rho_drift_save, dtype=np.float64).reshape(-1),
+        "rho_rms": np.asarray(rho_drift_save, dtype=np.float64),
     }
-    return reward_average_save, cost_average_save, rho_history, _pack_xi_history([], []), rho_labels, drift_history
+    return (
+        reward_average_save,
+        cost_average_save,
+        rho_history,
+        _pack_xi_history([], []),
+        rho_labels,
+        drift_history,
+    )
 
 
-def Fused_CPRO_main(args, example_name, return_aux=False):
-    return _run_policy_mix_main(args, example_name, "Fused_CPRO", True, return_aux)
+def Fused_CPRO_main(args, example_name):
+    return _run_policy_mix_main(
+        args,
+        example_name,
+        algorithm_label="Fused_CPRO",
+        use_offline_data=True,
+    )
 
 
-def Fused_CPRO_CosRho_main(args, example_name, return_aux=False):
+def Fused_CPRO_CosRho_main(args, example_name):
     run_args = copy.copy(args)
     run_args.rho_scheduler = getattr(run_args, "rho_scheduler", RHO_SCHEDULER_COSINE_RESTART_DECAY)
-    return _run_policy_mix_main(run_args, example_name, "Fused_CPRO_CosRho", True, return_aux)
+    return _run_policy_mix_main(
+        run_args,
+        example_name,
+        algorithm_label="Fused_CPRO_CosRho",
+        use_offline_data=True,
+    )
 
 
-def Fused_CPRO_RhoNew_main(args, example_name, return_aux=False):
+def Fused_CPRO_RhoNew_main(args, example_name):
     run_args = copy.copy(args)
     run_args.rho_scheduler = getattr(run_args, "rho_scheduler", RHO_SCHEDULER_EPISODE_PEAK_EXP_DECAY)
-    return _run_policy_mix_main(run_args, example_name, "Fused_CPRO_RhoNew", True, return_aux)
+    return _run_policy_mix_main(
+        run_args,
+        example_name,
+        algorithm_label="Fused_CPRO_RhoNew",
+        use_offline_data=True,
+    )
 
 
-def HRL_main(args, example_name, return_aux=False):
-    return _run_policy_mix_main(args, example_name, "HRL", False, return_aux)
+def HRL_main(args, example_name):
+    return _run_policy_mix_main(
+        args,
+        example_name,
+        algorithm_label="HRL",
+        use_offline_data=False,
+    )
 
 
 def _run_dk_main(args, example_name):
@@ -1908,5 +2014,5 @@ def DK_main(args, example_name):
     return _run_dk_main(args, example_name)
 
 
-def PRCRL_main(args, example_name, return_aux=False):
-    return _run_prcrl_main(args, example_name, return_aux)
+def PRCRL_main(args, example_name):
+    return _run_prcrl_main(args, example_name)

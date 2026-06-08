@@ -12,8 +12,10 @@ import numpy as np
 
 try:
     import torch
+    import torch.nn.functional as F
 except Exception:  # pragma: no cover - 仅在缺少 torch 环境时兜底
     torch = None
+    F = None
 
 
 # DK 高斯平滑的固定 log_std，用于表达“确定性均值 + 小方差高斯”的设计。
@@ -34,6 +36,10 @@ MIMO_DK_REG_BIAS = 0.25
 MIMO_POWER_MAX = 2.5
 # MIMO 正则化因子的最小值，避免数值退化。
 MIMO_REG_MIN = 1e-6
+# 动作变换的开区间下界；只用于 DK smoothing density 的反变换。
+ACTION_EPS = 1e-6
+# 反变换时的内部夹紧宽度，用于避免边界奇点。
+ACTION_INVERSE_EPS = 1e-6
 # MIMO 约束上限，用于 urgency 阈值判断。
 MIMO_CONSTRAINT_LIMIT = 1.2
 # 通用数值稳定项，避免除零或全零归一化。
@@ -66,6 +72,50 @@ def _validate_action_dim(action: np.ndarray, expected_dim: int, name: str) -> np
     return action_vec
 
 
+def _softplus_inverse(positive_torch: Any) -> Any:
+    x = positive_torch.clamp_min(ACTION_INVERSE_EPS)
+    return x + torch.log(-torch.expm1(-x))
+
+
+def _mimo_inverse_action_and_log_det(action_torch: Any) -> tuple[Any, Any]:
+    reg_mask = torch.zeros(action_torch.shape[-1], dtype=torch.bool, device=action_torch.device)
+    reg_mask[-1] = True
+    view_shape = [1] * action_torch.dim()
+    view_shape[-1] = action_torch.shape[-1]
+    reg_mask = reg_mask.view(*view_shape)
+
+    power_action = action_torch.clamp(
+        min=ACTION_EPS + ACTION_INVERSE_EPS,
+        max=MIMO_POWER_MAX - ACTION_INVERSE_EPS,
+    )
+    power_z = (power_action - ACTION_EPS) / (MIMO_POWER_MAX - ACTION_EPS)
+    raw_power = torch.logit(power_z)
+    raw_reg = _softplus_inverse(action_torch - ACTION_EPS)
+    raw_action = torch.where(reg_mask, raw_reg, raw_power)
+
+    power_log_det = (
+        torch.log(torch.tensor(MIMO_POWER_MAX - ACTION_EPS, dtype=action_torch.dtype, device=action_torch.device))
+        + F.logsigmoid(raw_action)
+        + F.logsigmoid(-raw_action)
+    )
+    reg_log_det = -F.softplus(-raw_action)
+    log_det = torch.where(reg_mask, reg_log_det, power_log_det).sum(dim=-1)
+    return raw_action, log_det
+
+
+def _clqr_inverse_action_and_log_det(action_torch: Any) -> tuple[Any, Any]:
+    scaled_action = (action_torch / CLQR_ACTION_MAX).clamp(
+        min=-1.0 + ACTION_INVERSE_EPS,
+        max=1.0 - ACTION_INVERSE_EPS,
+    )
+    raw_action = 0.5 * (torch.log1p(scaled_action) - torch.log1p(-scaled_action))
+    log_det_per_dim = (
+        torch.log(torch.tensor(CLQR_ACTION_MAX, dtype=action_torch.dtype, device=action_torch.device))
+        + 2.0 * (np.log(2.0) - raw_action - F.softplus(-2.0 * raw_action))
+    )
+    return raw_action, log_det_per_dim.sum(dim=-1)
+
+
 class HeuristicGaussianPolicy:
     """轻量策略包装：确定性 DK 均值 + 固定高斯平滑。"""
 
@@ -75,11 +125,13 @@ class HeuristicGaussianPolicy:
         action_dim: int,
         device: str = "cpu",
         log_std: float = DK_LOG_STD,
+        transform_kind: str = "mimo",
     ) -> None:
         self.mean_fn = mean_fn
         self.action_dim = int(action_dim)
         self.device = str(device)
         self.log_std = float(log_std)
+        self.transform_kind = str(transform_kind).lower()
 
     def mean_action(self, state: Any) -> np.ndarray:
         action = self.mean_fn(state)
@@ -111,9 +163,18 @@ class HeuristicGaussianPolicy:
             dtype=torch.float,
             device=states_torch.device,
         )
+        if self.transform_kind == "clqr":
+            raw_mu, _ = _clqr_inverse_action_and_log_det(mu)
+            raw_action, log_det = _clqr_inverse_action_and_log_det(actions_torch)
+        elif self.transform_kind == "mimo":
+            raw_mu, _ = _mimo_inverse_action_and_log_det(mu)
+            raw_action, log_det = _mimo_inverse_action_and_log_det(actions_torch)
+        else:
+            raise ValueError("unsupported DK transform_kind: {0}".format(self.transform_kind))
+
         std = torch.exp(log_std).view(1, -1).repeat(states_torch.shape[0], 1)
-        dist = torch.distributions.normal.Normal(mu, std)
-        return dist.log_prob(actions_torch).sum(dim=1)
+        dist = torch.distributions.normal.Normal(raw_mu, std)
+        return dist.log_prob(raw_action).sum(dim=1) - log_det
 
 
 def build_mimo_dk_action(
@@ -263,6 +324,7 @@ def build_mimo_dk_policy(
         action_dim=action_dim,
         device=device,
         log_std=log_std,
+        transform_kind="mimo",
     )
 
 
@@ -298,6 +360,7 @@ def build_clqr_dk_policy(
         action_dim=action_dim,
         device=device,
         log_std=log_std,
+        transform_kind="clqr",
     )
     policy.gain = gain
     return policy
@@ -315,6 +378,8 @@ def build_dk_policy(scene: str, **kwargs: Any) -> HeuristicGaussianPolicy:
 
 
 __all__ = [
+    "ACTION_EPS",
+    "ACTION_INVERSE_EPS",
     "CLQR_ACTION_MAX",
     "DK_LOG_STD",
     "EPS",

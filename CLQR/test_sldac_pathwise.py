@@ -13,7 +13,7 @@ from SLDAC_Pathwise import (
 )
 from critic_opt import Critic
 from qprop_critic import QPropCritic
-from run_mimo_sldac_pathwise import build_python_config
+from run_clqr_sldac_pathwise import build_python_config
 
 
 class SldacPathwiseTest(unittest.TestCase):
@@ -51,7 +51,7 @@ class SldacPathwiseTest(unittest.TestCase):
         self.assertLess(float(negative_covariance), 0.0)
 
     def test_actor_exposes_mean_and_reparameterized_sampling(self):
-        _, actor, state_dim, action_dim, _, _ = _build_scene("MIMO", 0, "cpu", 4)
+        _, actor, state_dim, action_dim, _, _ = _build_scene("CLQR", 0, "cpu", 4)
         state_batch_torch = torch.randn(6, state_dim, dtype=torch.float)
         mean_action = actor.mean_action_tensor(state_batch_torch)
         sample_action = actor.sample_action_tensor(
@@ -65,8 +65,8 @@ class SldacPathwiseTest(unittest.TestCase):
         self.assertTrue(torch.isfinite(sample_action).all().item())
 
     def test_stochastic_pathwise_gradient_shape(self):
-        _, actor, state_dim, action_dim, constraint_dim, _ = _build_scene("MIMO", 0, "cpu", 4)
-        critic = Critic("MIMO", 4, state_dim, action_dim, constraint_dim, 1, "cpu")
+        _, actor, state_dim, action_dim, constraint_dim, _ = _build_scene("CLQR", 0, "cpu", 4)
+        critic = Critic("CLQR", 4, state_dim, action_dim, constraint_dim, 1, "cpu")
         _, real_theta_dim = _flatten_actor_parameters(actor)
         state_batch_torch = torch.randn(8, state_dim, dtype=torch.float)
         grad_tilda_torch = _compute_pathwise_gradients(
@@ -84,8 +84,8 @@ class SldacPathwiseTest(unittest.TestCase):
         self.assertTrue(torch.isfinite(grad_tilda_torch).all().item())
 
     def test_deterministic_pathwise_can_freeze_log_std(self):
-        _, actor, state_dim, action_dim, constraint_dim, _ = _build_scene("MIMO", 0, "cpu", 4)
-        critic = Critic("MIMO", 4, state_dim, action_dim, constraint_dim, 1, "cpu")
+        _, actor, state_dim, action_dim, constraint_dim, _ = _build_scene("CLQR", 0, "cpu", 4)
+        critic = Critic("CLQR", 4, state_dim, action_dim, constraint_dim, 1, "cpu")
         _, real_theta_dim = _flatten_actor_parameters(actor)
         state_batch_torch = torch.randn(8, state_dim, dtype=torch.float)
         grad_tilda_torch = _compute_pathwise_gradients(
@@ -103,8 +103,8 @@ class SldacPathwiseTest(unittest.TestCase):
         self.assertTrue(torch.allclose(grad_tilda_torch[:, -action_dim:], torch.zeros_like(grad_tilda_torch[:, -action_dim:])))
 
     def test_actor_gradient_does_not_accumulate_critic_parameter_grads(self):
-        _, actor, state_dim, _, constraint_dim, _ = _build_scene("MIMO", 0, "cpu", 4)
-        critic = Critic("MIMO", 4, state_dim, actor.action_dim, constraint_dim, 1, "cpu")
+        _, actor, state_dim, _, constraint_dim, _ = _build_scene("CLQR", 0, "cpu", 4)
+        critic = Critic("CLQR", 4, state_dim, actor.action_dim, constraint_dim, 1, "cpu")
         _, real_theta_dim = _flatten_actor_parameters(actor)
         state_batch_torch = torch.randn(8, state_dim, dtype=torch.float)
         _compute_pathwise_gradients(
@@ -124,8 +124,8 @@ class SldacPathwiseTest(unittest.TestCase):
                 self.assertIsNone(param.grad)
 
     def test_pathwise_gradient_can_return_saved_diagnostics(self):
-        _, actor, state_dim, _, constraint_dim, _ = _build_scene("MIMO", 0, "cpu", 4)
-        critic = Critic("MIMO", 4, state_dim, actor.action_dim, constraint_dim, 1, "cpu")
+        _, actor, state_dim, _, constraint_dim, _ = _build_scene("CLQR", 0, "cpu", 4)
+        critic = Critic("CLQR", 4, state_dim, actor.action_dim, constraint_dim, 1, "cpu")
         _, real_theta_dim = _flatten_actor_parameters(actor)
         state_batch_torch = torch.randn(8, state_dim, dtype=torch.float)
         grad_tilda_torch, diagnostics = _compute_pathwise_gradients(
@@ -148,12 +148,17 @@ class SldacPathwiseTest(unittest.TestCase):
         self.assertTrue(np.isfinite(diagnostics["constraint_to_objective_grad_norm_ratio"]).all())
 
     def test_qprop_conservative_gradient_returns_diagnostics(self):
-        _, actor, state_dim, action_dim, constraint_dim, _ = _build_scene("MIMO", 0, "cpu", 4)
-        critic = Critic("MIMO", 4, state_dim, action_dim, constraint_dim, 1, "cpu")
-        qprop_critic = QPropCritic("MIMO", state_dim, action_dim, constraint_dim, "cpu")
+        _, actor, state_dim, action_dim, constraint_dim, _ = _build_scene("CLQR", 0, "cpu", 4)
+        critic = Critic("CLQR", 4, state_dim, action_dim, constraint_dim, 1, "cpu")
+        qprop_critic = QPropCritic("CLQR", state_dim, action_dim, constraint_dim, "cpu")
         _, real_theta_dim = _flatten_actor_parameters(actor)
         state_batch_torch = torch.randn(8, state_dim, dtype=torch.float)
-        action_batch_torch = torch.randn(8, action_dim, dtype=torch.float)
+        action_batch_torch = actor.sample_action_tensor(
+            state_batch_torch,
+            reparameterized=False,
+            use_mean=False,
+            track_log_std_grad=False,
+        ).detach()
         grad_tilda_torch, diagnostics = _compute_pathwise_gradients(
             actor,
             critic,
@@ -199,14 +204,21 @@ class SldacPathwiseTest(unittest.TestCase):
                 self.assertIsNone(param.grad)
 
     def test_qprop_conservative_can_use_main_critic_control_source(self):
-        _, actor, state_dim, action_dim, constraint_dim, _ = _build_scene("MIMO", 0, "cpu", 4)
-        critic = Critic("MIMO", 4, state_dim, action_dim, constraint_dim, 1, "cpu")
+        _, actor, state_dim, action_dim, constraint_dim, _ = _build_scene("CLQR", 0, "cpu", 4)
+        critic = Critic("CLQR", 4, state_dim, action_dim, constraint_dim, 1, "cpu")
         _, real_theta_dim = _flatten_actor_parameters(actor)
+        state_batch_torch = torch.randn(8, state_dim, dtype=torch.float)
+        action_batch_torch = actor.sample_action_tensor(
+            state_batch_torch,
+            reparameterized=False,
+            use_mean=False,
+            track_log_std_grad=False,
+        ).detach()
         grad_tilda_torch, diagnostics = _compute_pathwise_gradients(
             actor,
             critic,
-            torch.randn(8, state_dim, dtype=torch.float),
-            torch.randn(8, action_dim, dtype=torch.float),
+            state_batch_torch,
+            action_batch_torch,
             constraint_dim,
             real_theta_dim,
             "qprop_conservative",
@@ -220,14 +232,21 @@ class SldacPathwiseTest(unittest.TestCase):
         self.assertEqual(float(diagnostics["qprop_control_source_code"]), 0.0)
 
     def test_qprop_conservative_can_freeze_log_std(self):
-        _, actor, state_dim, action_dim, constraint_dim, _ = _build_scene("MIMO", 0, "cpu", 4)
-        critic = Critic("MIMO", 4, state_dim, action_dim, constraint_dim, 1, "cpu")
+        _, actor, state_dim, action_dim, constraint_dim, _ = _build_scene("CLQR", 0, "cpu", 4)
+        critic = Critic("CLQR", 4, state_dim, action_dim, constraint_dim, 1, "cpu")
         _, real_theta_dim = _flatten_actor_parameters(actor)
+        state_batch_torch = torch.randn(8, state_dim, dtype=torch.float)
+        action_batch_torch = actor.sample_action_tensor(
+            state_batch_torch,
+            reparameterized=False,
+            use_mean=False,
+            track_log_std_grad=False,
+        ).detach()
         grad_tilda_torch = _compute_pathwise_gradients(
             actor,
             critic,
-            torch.randn(8, state_dim, dtype=torch.float),
-            torch.randn(8, action_dim, dtype=torch.float),
+            state_batch_torch,
+            action_batch_torch,
             constraint_dim,
             real_theta_dim,
             "qprop_conservative",
@@ -242,38 +261,38 @@ class SldacPathwiseTest(unittest.TestCase):
                 "update_index": 1,
                 "global_step": 1001,
                 "episode_index": 0,
-                "q_mean": np.array([1.0, 2.0, 3.0]),
-                "q_std": np.array([0.1, 0.2, 0.3]),
-                "grad_a_norm": np.array([4.0, 5.0, 6.0]),
-                "actor_grad_norm": np.array([7.0, 8.0, 9.0]),
-                "constraint_to_objective_grad_norm_ratio": np.array([8.0 / 7.0, 9.0 / 7.0]),
-                "score_grad_norm": np.array([1.0, 2.0, 3.0]),
-                "pathwise_grad_norm": np.array([4.0, 5.0, 6.0]),
-                "combined_grad_norm": np.array([7.0, 8.0, 9.0]),
-                "qprop_eta": np.array([1.0, 0.0, 1.0]),
-                "qprop_covariance": np.array([0.3, -0.2, 0.1]),
-                "score_signal_mean": np.array([0.0, 0.1, 0.2]),
-                "score_signal_std": np.array([1.0, 1.1, 1.2]),
-                "control_signal_mean": np.array([0.0, 0.2, 0.4]),
-                "control_signal_std": np.array([0.5, 0.6, 0.7]),
-                "qprop_critic_loss": np.array([0.1, 0.2, 0.3]),
-                "qprop_critic_td_error_mean": np.array([0.4, 0.5, 0.6]),
-                "qprop_critic_target_mean": np.array([0.7, 0.8, 0.9]),
-                "qprop_critic_pred_mean": np.array([1.0, 1.1, 1.2]),
+                "q_mean": np.array([1.0, 2.0]),
+                "q_std": np.array([0.1, 0.2]),
+                "grad_a_norm": np.array([4.0, 5.0]),
+                "actor_grad_norm": np.array([7.0, 8.0]),
+                "constraint_to_objective_grad_norm_ratio": np.array([8.0 / 7.0]),
+                "score_grad_norm": np.array([1.0, 2.0]),
+                "pathwise_grad_norm": np.array([4.0, 5.0]),
+                "combined_grad_norm": np.array([7.0, 8.0]),
+                "qprop_eta": np.array([1.0, 0.0]),
+                "qprop_covariance": np.array([0.3, -0.2]),
+                "score_signal_mean": np.array([0.0, 0.1]),
+                "score_signal_std": np.array([1.0, 1.1]),
+                "control_signal_mean": np.array([0.0, 0.2]),
+                "control_signal_std": np.array([0.5, 0.6]),
+                "qprop_critic_loss": np.array([0.1, 0.2]),
+                "qprop_critic_td_error_mean": np.array([0.4, 0.5]),
+                "qprop_critic_target_mean": np.array([0.7, 0.8]),
+                "qprop_critic_pred_mean": np.array([1.0, 1.1]),
                 "qprop_replay_batch_size": 8.0,
                 "qprop_control_source_code": 1.0,
                 "qprop_target_action_mode_code": 0.0,
-                "qprop_pathwise_grad_ratio": np.array([0.8, 5.0 / 7.0, 2.0 / 3.0]),
-                "qprop_score_grad_ratio": np.array([0.2, 2.0 / 7.0, 1.0 / 3.0]),
+                "qprop_pathwise_grad_ratio": np.array([0.8, 5.0 / 7.0]),
+                "qprop_score_grad_ratio": np.array([0.2, 2.0 / 7.0]),
             }
         ]
-        payload = _pack_pathwise_diagnostics(history, constraint_dim=2)
-        self.assertEqual(tuple(payload["q_mean"].shape), (1, 3))
-        self.assertEqual(tuple(payload["constraint_to_objective_grad_norm_ratio"].shape), (1, 2))
-        self.assertEqual(tuple(payload["qprop_eta"].shape), (1, 3))
-        self.assertEqual(tuple(payload["combined_grad_norm"].shape), (1, 3))
-        self.assertEqual(tuple(payload["qprop_critic_loss"].shape), (1, 3))
-        self.assertEqual(tuple(payload["qprop_pathwise_grad_ratio"].shape), (1, 3))
+        payload = _pack_pathwise_diagnostics(history, constraint_dim=1)
+        self.assertEqual(tuple(payload["q_mean"].shape), (1, 2))
+        self.assertEqual(tuple(payload["constraint_to_objective_grad_norm_ratio"].shape), (1, 1))
+        self.assertEqual(tuple(payload["qprop_eta"].shape), (1, 2))
+        self.assertEqual(tuple(payload["combined_grad_norm"].shape), (1, 2))
+        self.assertEqual(tuple(payload["qprop_critic_loss"].shape), (1, 2))
+        self.assertEqual(tuple(payload["qprop_pathwise_grad_ratio"].shape), (1, 2))
         self.assertEqual(payload["qprop_replay_batch_size"].tolist(), [8.0])
         self.assertEqual(payload["qprop_control_source_code"].tolist(), [1.0])
         self.assertEqual(payload["update_index"].tolist(), [1])

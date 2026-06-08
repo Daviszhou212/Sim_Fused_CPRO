@@ -5,6 +5,7 @@ from qprop_critic import QPropCritic
 from utils import update_policy
 from model import GaussianPolicy_MIMO
 from model import GaussianPolicy_CLQR
+from model import ACTOR_DISTRIBUTION, get_action_transform_metadata
 from model import get_mimo_actor_hidden_dims
 from buffer import DataStorage
 import os
@@ -593,6 +594,8 @@ def _save_sldac_pathwise_checkpoint(
 	checkpoint = {
 		"schema_version": CHECKPOINT_SCHEMA_VERSION,
 		"algorithm": PATHWISE_ALGORITHM_NAME,
+		"actor_distribution": ACTOR_DISTRIBUTION,
+		"action_transform": get_action_transform_metadata(),
 		"example_name": str(example_name),
 		"run_tag": str(run_tag),
 		"seed": int(seed),
