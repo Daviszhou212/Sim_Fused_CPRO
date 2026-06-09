@@ -10,6 +10,7 @@ from Fused_CPRO import (
 )
 from model import (
     CLQR_ACTION_MAX,
+    LEGACY_ACTOR_DISTRIBUTION,
     GaussianPolicy_CLQR,
     clqr_inverse_action_and_log_det,
 )
@@ -92,6 +93,32 @@ class SquashedGaussianClqrTest(unittest.TestCase):
         np.testing.assert_allclose(sampled, boundary_mean)
         boundary_batch = torch.tensor(np.tile(boundary_mean, (3, 1)), dtype=torch.float)
         self.assertTrue(torch.isfinite(dk_policy.log_prob_batch(state_torch[:3], boundary_batch)).all().item())
+
+    def test_dk_legacy_log_prob_matches_old_direct_gaussian(self):
+        mean = np.asarray([0.8, -0.4, 0.2, 1.1], dtype=np.float64)
+        states_torch = torch.randn(3, 15, dtype=torch.float)
+        actions_torch = torch.tensor(
+            [
+                [0.6, -0.3, 0.0, 1.0],
+                [0.9, -0.5, 0.1, 1.2],
+                [0.7, -0.2, 0.3, 0.8],
+            ],
+            dtype=torch.float,
+        )
+        legacy_policy = HeuristicGaussianPolicy(
+            lambda state: mean,
+            4,
+            "cpu",
+            transform_kind="clqr",
+            actor_distribution="legacy",
+        )
+
+        mu = torch.tensor(np.tile(mean, (3, 1)), dtype=torch.float)
+        std = torch.exp(legacy_policy.log_std).view(1, -1).expand_as(mu)
+        expected = torch.distributions.normal.Normal(mu, std).log_prob(actions_torch).sum(dim=1)
+
+        self.assertEqual(legacy_policy.actor_distribution, LEGACY_ACTOR_DISTRIBUTION)
+        self.assertTrue(torch.allclose(legacy_policy.log_prob_batch(states_torch, actions_torch), expected))
 
 
 if __name__ == "__main__":

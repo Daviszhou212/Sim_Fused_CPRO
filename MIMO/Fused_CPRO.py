@@ -12,7 +12,12 @@ except Exception:
 from buffer import DataStorage
 from critic_opt import Critic
 from environment import Environment_CLQR, Environment_MIMO
-from model import ACTOR_DISTRIBUTION, GaussianPolicy_CLQR, GaussianPolicy_MIMO
+from model import (
+    ACTOR_DISTRIBUTION,
+    LEGACY_ACTOR_DISTRIBUTION,
+    build_gaussian_policy,
+    normalize_actor_distribution,
+)
 from model import clqr_inverse_action_and_log_det, mimo_inverse_action_and_log_det
 from model import get_legacy_mimo_actor_hidden_dims, get_mimo_actor_hidden_dims, normalize_hidden_dims
 
@@ -69,7 +74,8 @@ def _is_mimo(example_name):
     return "MIMO" in str(example_name)
 
 
-def _build_scene(example_name, seed, device, policy_batch_size):
+def _build_scene(example_name, seed, device, policy_batch_size, actor_distribution=None):
+    actor_distribution = normalize_actor_distribution(actor_distribution)
     if _is_mimo(example_name):
         nt, ue_num = 8, 4
         state_dim = 2 * ue_num * nt + ue_num
@@ -77,14 +83,28 @@ def _build_scene(example_name, seed, device, policy_batch_size):
         env = Environment_MIMO(seed=int(seed), Nt=nt, UE_num=ue_num)
         constraint_dim = ue_num
         constr_lim = np.full((constraint_dim,), MIMO_CONSTRAINT_LIMIT, dtype=np.float64)
-        actor = GaussianPolicy_MIMO(state_dim, action_dim, device, int(policy_batch_size))
+        actor = build_gaussian_policy(
+            example_name,
+            state_dim,
+            action_dim,
+            device,
+            int(policy_batch_size),
+            actor_distribution=actor_distribution,
+        )
     else:
         state_dim = 15
         action_dim = 4
         env = Environment_CLQR(seed=int(seed), state_dim=state_dim, action_dim=action_dim)
         constraint_dim = 1
         constr_lim = 380.0 * np.ones((constraint_dim,), dtype=np.float64)
-        actor = GaussianPolicy_CLQR(state_dim, action_dim, device, int(policy_batch_size))
+        actor = build_gaussian_policy(
+            example_name,
+            state_dim,
+            action_dim,
+            device,
+            int(policy_batch_size),
+            actor_distribution=actor_distribution,
+        )
     return env, actor, state_dim, action_dim, constraint_dim, constr_lim
 
 
@@ -241,12 +261,13 @@ def _build_old_policy_labels(old_policy_entries):
 
 
 class HeuristicGaussianPolicy:
-    def __init__(self, mean_fn, action_dim, device, log_std=DK_LOG_STD, transform_kind="mimo"):
+    def __init__(self, mean_fn, action_dim, device, log_std=DK_LOG_STD, transform_kind="mimo", actor_distribution=None):
         self.mean_fn = mean_fn
         self.action_dim = int(action_dim)
         self.device = device
         self.log_std = torch.full((self.action_dim,), float(log_std), dtype=torch.float, device=device)
         self.transform_kind = str(transform_kind).lower()
+        self.actor_distribution = normalize_actor_distribution(actor_distribution)
 
     def mean_action(self, state):
         return np.asarray(self.mean_fn(state), dtype=np.float64).reshape(-1)
@@ -259,6 +280,10 @@ class HeuristicGaussianPolicy:
         for idx in range(states_torch.shape[0]):
             means.append(self.mean_action(states_torch[idx].detach().cpu().numpy()))
         mu = torch.tensor(np.asarray(means, dtype=np.float64), dtype=torch.float, device=states_torch.device)
+        std = torch.exp(self.log_std).view(1, -1).repeat(states_torch.shape[0], 1)
+        if self.actor_distribution == LEGACY_ACTOR_DISTRIBUTION:
+            dist = torch.distributions.normal.Normal(mu, std)
+            return dist.log_prob(actions_torch).sum(dim=1)
         if self.transform_kind == "clqr":
             raw_mu, _, _ = clqr_inverse_action_and_log_det(mu, clamp_to_support=True)
             raw_action, log_det, _ = clqr_inverse_action_and_log_det(actions_torch, clamp_to_support=True)
@@ -267,7 +292,6 @@ class HeuristicGaussianPolicy:
             raw_action, log_det, _ = mimo_inverse_action_and_log_det(actions_torch, clamp_to_support=True)
         else:
             raise ValueError("unsupported DK transform_kind: {0}".format(self.transform_kind))
-        std = torch.exp(self.log_std).view(1, -1).repeat(states_torch.shape[0], 1)
         dist = torch.distributions.normal.Normal(raw_mu, std)
         return dist.log_prob(raw_action).sum(dim=1) - log_det
 
@@ -283,7 +307,8 @@ def _clqr_stabilizing_gain(env, gain_scale=0.25, seed=0):
     return gain_scale * scale * k
 
 
-def _build_dk_policy(example_name, env, device, seed):
+def _build_dk_policy(example_name, env, device, seed, actor_distribution=None):
+    actor_distribution = normalize_actor_distribution(actor_distribution)
     if _is_mimo(example_name):
         ue_num = env.UE_num
 
@@ -307,7 +332,7 @@ def _build_dk_policy(example_name, env, device, seed):
             reg = float(max(MIMO_DK_REG_BIAS, MIMO_REG_MIN))
             return np.concatenate((power.astype(np.float64), np.asarray([reg], dtype=np.float64)), axis=0)
 
-        return HeuristicGaussianPolicy(mimo_mean, env.action_dim, device, transform_kind="mimo")
+        return HeuristicGaussianPolicy(mimo_mean, env.action_dim, device, transform_kind="mimo", actor_distribution=actor_distribution)
 
     gain = _clqr_stabilizing_gain(env, gain_scale=0.25, seed=int(seed) + 17)
 
@@ -315,7 +340,7 @@ def _build_dk_policy(example_name, env, device, seed):
         action = -(gain @ _as_numpy(state))
         return np.clip(action, -CLQR_ACTION_MAX, CLQR_ACTION_MAX)
 
-    return HeuristicGaussianPolicy(clqr_mean, env.action_dim, device, transform_kind="clqr")
+    return HeuristicGaussianPolicy(clqr_mean, env.action_dim, device, transform_kind="clqr", actor_distribution=actor_distribution)
 
 
 def _policy_rollout_dataset(example_name, policy, steps, seed, device):
@@ -1037,9 +1062,15 @@ def _load_sldac_actor_checkpoint(
         checkpoint_root=checkpoint_root,
     )
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    if checkpoint.get("actor_distribution") != ACTOR_DISTRIBUTION or "action_transform" not in checkpoint:
+    checkpoint_actor_distribution = checkpoint.get("actor_distribution")
+    if checkpoint_actor_distribution is None:
+        actor_distribution = LEGACY_ACTOR_DISTRIBUTION
+    else:
+        actor_distribution = normalize_actor_distribution(checkpoint_actor_distribution)
+    if actor_distribution != ACTOR_DISTRIBUTION or "action_transform" not in checkpoint:
         print(
-            "warning: legacy checkpoint loaded under {0}; behavior is not equivalent: {1}".format(
+            "warning: checkpoint actor_distribution={0} loaded while current default is {1}: {2}".format(
+                actor_distribution,
                 ACTOR_DISTRIBUTION,
                 checkpoint_path,
             )
@@ -1123,7 +1154,7 @@ def _load_sldac_actor_checkpoint(
             )
         )
 
-    return checkpoint_path, actor_state_dict, actor_log_std_torch
+    return checkpoint_path, actor_state_dict, actor_log_std_torch, actor_distribution
 
 
 def _load_old_policy_from_checkpoint(
@@ -1138,7 +1169,7 @@ def _load_old_policy_from_checkpoint(
     action_dim,
     constraint_dim,
 ):
-    checkpoint_path, actor_state_dict, actor_log_std = _load_sldac_actor_checkpoint(
+    checkpoint_path, actor_state_dict, actor_log_std, actor_distribution = _load_sldac_actor_checkpoint(
         args,
         example_name,
         run_tag,
@@ -1150,14 +1181,18 @@ def _load_old_policy_from_checkpoint(
         constraint_dim,
     )
 
-    if _is_mimo(example_name):
-        actor = GaussianPolicy_MIMO(int(state_dim), int(action_dim), device, int(policy_batch_size))
-    else:
-        actor = GaussianPolicy_CLQR(int(state_dim), int(action_dim), device, int(policy_batch_size))
+    actor = build_gaussian_policy(
+        example_name,
+        int(state_dim),
+        int(action_dim),
+        device,
+        int(policy_batch_size),
+        actor_distribution=actor_distribution,
+    )
     actor.net.load_state_dict(actor_state_dict)
     actor.log_std = actor_log_std
 
-    print("load old policy checkpoint:", checkpoint_path)
+    print("load old policy checkpoint:", checkpoint_path, "actor_distribution:", actor_distribution)
     return FrozenActorPolicy(actor)
 
 
@@ -1172,7 +1207,7 @@ def _maybe_initialize_new_actor_from_checkpoint(args, example_name, actor, state
         print("initialize new actor from default random initialization.")
         return actor
 
-    checkpoint_path, actor_state_dict, _ = _load_sldac_actor_checkpoint(
+    checkpoint_path, actor_state_dict, _, checkpoint_actor_distribution = _load_sldac_actor_checkpoint(
         args,
         example_name,
         run_tag,
@@ -1184,6 +1219,14 @@ def _maybe_initialize_new_actor_from_checkpoint(args, example_name, actor, state
         constraint_dim,
         checkpoint_root=getattr(args, "new_policy_checkpoint_root", None),
     )
+    current_actor_distribution = normalize_actor_distribution(getattr(actor, "actor_distribution", None))
+    if checkpoint_actor_distribution != current_actor_distribution:
+        print(
+            "warning: initialize actor_distribution={0} from checkpoint actor_distribution={1}; behavior is not equivalent.".format(
+                current_actor_distribution,
+                checkpoint_actor_distribution,
+            )
+        )
     actor.net.load_state_dict(actor_state_dict)
     print("initialize new actor mu from checkpoint and keep default log_std:", checkpoint_path)
     return actor
@@ -1192,7 +1235,13 @@ def _maybe_initialize_new_actor_from_checkpoint(args, example_name, actor, state
 def _train_sldac_like_actor(args, example_name, seed):
     _set_seed(seed)
     device = "cpu"
-    env, actor, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(example_name, seed, device, int(args.grad_T))
+    env, actor, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(
+        example_name,
+        seed,
+        device,
+        int(args.grad_T),
+        actor_distribution=getattr(args, "actor_distribution", None),
+    )
 
     t_horizon = int(args.T)
     grad_t = int(args.grad_T)
@@ -1289,7 +1338,13 @@ def _build_old_policy_library(args, example_name, main_env, device, state_dim, a
     old_policy_seed = int(getattr(args, "old_policy_seed", seed))
     old_policy_entries = [
         _build_old_policy_entry(
-            _build_dk_policy(example_name, main_env, device, old_policy_seed),
+            _build_dk_policy(
+                example_name,
+                main_env,
+                device,
+                old_policy_seed,
+                actor_distribution=getattr(args, "actor_distribution", None),
+            ),
             "dk_policy",
             old_policy_seed,
         )
@@ -1437,7 +1492,13 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data):
     q_update_time = int(args.Q_update_time)
     window = int(args.window)
 
-    env, actor_new, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(example_name, seed, device, grad_t)
+    env, actor_new, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(
+        example_name,
+        seed,
+        device,
+        grad_t,
+        actor_distribution=getattr(args, "actor_distribution", None),
+    )
     actor_new = _maybe_initialize_new_actor_from_checkpoint(
         args,
         example_name,
@@ -1763,7 +1824,13 @@ def _run_prcrl_main(args, example_name):
     tau_cost = float(args.tau_cost)
     window = int(args.window)
 
-    env, actor_new, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(example_name, seed, device, grad_t)
+    env, actor_new, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(
+        example_name,
+        seed,
+        device,
+        grad_t,
+        actor_distribution=getattr(args, "actor_distribution", None),
+    )
     actor_new = _maybe_initialize_new_actor_from_checkpoint(
         args,
         example_name,

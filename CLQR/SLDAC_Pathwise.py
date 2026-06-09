@@ -3,9 +3,8 @@ from environment import Environment_CLQR
 from critic_opt import Critic
 from qprop_critic import QPropCritic
 from utils import update_policy
-from model import GaussianPolicy_MIMO
-from model import GaussianPolicy_CLQR
-from model import ACTOR_DISTRIBUTION, get_action_transform_metadata
+from model import build_gaussian_policy
+from model import get_action_transform_metadata, normalize_actor_distribution
 from buffer import DataStorage
 import os
 import numpy as np
@@ -46,6 +45,7 @@ CHECKPOINT_CONFIG_FIELDS = (
 	"qprop_critic_lr_scale",
 	"qprop_target_tau_reward",
 	"qprop_target_tau_cost",
+	"actor_distribution",
 )
 
 
@@ -139,7 +139,8 @@ def _resolve_algorithm_modes(args):
 	return policy_gradient_mode, behavior_policy_mode, normalize_actor_gradient, update_log_std, print_actor_grad_norm
 
 
-def _build_scene(example_name, seed, device, grad_t):
+def _build_scene(example_name, seed, device, grad_t, actor_distribution=None):
+	actor_distribution = normalize_actor_distribution(actor_distribution)
 	if "MIMO" in example_name:
 		Nt, UE_num = 8, 4
 		state_dim = 2 * UE_num * Nt + UE_num
@@ -147,13 +148,27 @@ def _build_scene(example_name, seed, device, grad_t):
 		env = Environment_MIMO(seed=seed, Nt=Nt, UE_num=UE_num)
 		constraint_dim = UE_num
 		constr_lim = [1.2, 1.2, 1.2, 1.2]
-		actor = GaussianPolicy_MIMO(state_dim, action_dim, device, grad_t)
+		actor = build_gaussian_policy(
+			example_name,
+			state_dim,
+			action_dim,
+			device,
+			grad_t,
+			actor_distribution=actor_distribution,
+		)
 	else:
 		state_dim, action_dim = 15, 4
 		env = Environment_CLQR(seed=seed, state_dim=state_dim, action_dim=action_dim)
 		constraint_dim = 1
 		constr_lim = 380 * np.ones(constraint_dim)
-		actor = GaussianPolicy_CLQR(state_dim, action_dim, device, grad_t)
+		actor = build_gaussian_policy(
+			example_name,
+			state_dim,
+			action_dim,
+			device,
+			grad_t,
+			actor_distribution=actor_distribution,
+		)
 	return env, actor, state_dim, action_dim, constraint_dim, constr_lim
 
 
@@ -593,8 +608,10 @@ def _save_sldac_pathwise_checkpoint(
 	checkpoint = {
 		"schema_version": CHECKPOINT_SCHEMA_VERSION,
 		"algorithm": PATHWISE_ALGORITHM_NAME,
-		"actor_distribution": ACTOR_DISTRIBUTION,
-		"action_transform": get_action_transform_metadata(),
+		"actor_distribution": getattr(actor, "actor_distribution", normalize_actor_distribution(getattr(args, "actor_distribution", None))),
+		"action_transform": get_action_transform_metadata(
+			getattr(actor, "actor_distribution", getattr(args, "actor_distribution", None))
+		),
 		"example_name": str(example_name),
 		"run_tag": str(run_tag),
 		"seed": int(seed),
@@ -670,7 +687,13 @@ def SLDAC_Pathwise_main(args, example_name):
 	reward_average_save = []
 	cost_average_save = []
 	diagnostics_history = []
-	env, actor, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(example_name, seed, device, grad_T)
+	env, actor, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(
+		example_name,
+		seed,
+		device,
+		grad_T,
+		actor_distribution=getattr(args, "actor_distribution", None),
+	)
 	buffer = DataStorage(T, window, num_new_data, 1, state_dim, action_dim, constraint_dim)
 	critic = Critic(example_name, grad_T, state_dim, action_dim, constraint_dim, Q_update_time, device)
 	qprop_critic = None

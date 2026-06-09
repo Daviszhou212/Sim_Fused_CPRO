@@ -53,6 +53,7 @@ DEFAULT_TAU_COST = 1.0
 DEFAULT_RHO_MIN_NEW_ACTOR = 1e-4
 DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
 DEFAULT_FREEZE_RHO_EPISODE_COUNT = 0
+DEFAULT_ACTOR_DISTRIBUTION = "squashed"
 
 # CosRho 额外调度参数：控制 rho 的 cosine-restart-decay 更新。
 DEFAULT_XI_POW = 0.9
@@ -101,6 +102,7 @@ def build_python_config():
         "rho_min_old_policy": float(DEFAULT_RHO_MIN_OLD_POLICY),
         "freeze_rho_episode_count": int(DEFAULT_FREEZE_RHO_EPISODE_COUNT),
         "device": str(DEVICE),
+        "actor_distribution": str(DEFAULT_ACTOR_DISTRIBUTION),
         "rho_scheduler": str(RHO_SCHEDULER),
         "rho_beta_peak_init": float(DEFAULT_RHO_BETA_PEAK_INIT),
         "rho_beta_peak_final_ratio": float(DEFAULT_RHO_BETA_PEAK_FINAL_RATIO),
@@ -499,6 +501,7 @@ def build_parser():
     parser.add_argument("--rho-min-old-policy", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--freeze-rho-episode-count", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--actor-distribution", dest="actor_distribution", type=str, choices=["squashed", "legacy"], default=argparse.SUPPRESS)
     parser.add_argument("--rho-beta-peak-init", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-beta-peak-final-ratio", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-beta-min", type=float, default=argparse.SUPPRESS)

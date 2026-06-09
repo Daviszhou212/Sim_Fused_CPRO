@@ -6,12 +6,15 @@ import torch
 from environment import Environment_MultiCellMIMO_CTDE
 from Fused_CPRO import (
     HeuristicGaussianPolicy,
+    _build_dk_policy,
     _build_mixture_log_prob,
     _log_prob_batch,
 )
 from model import (
     ACTION_EPS,
+    LEGACY_ACTOR_DISTRIBUTION,
     MIMO_POWER_MAX,
+    SQUASHED_ACTOR_DISTRIBUTION,
     GaussianPolicy_MIMO,
     GaussianPolicy_MultiCellMIMO_CTDE,
     mimo_inverse_action_and_log_det,
@@ -129,6 +132,61 @@ class SquashedGaussianMimoTest(unittest.TestCase):
         np.testing.assert_allclose(sampled, boundary_mean)
         boundary_batch = torch.tensor(np.tile(boundary_mean, (3, 1)), dtype=torch.float)
         self.assertTrue(torch.isfinite(dk_policy.log_prob_batch(state_torch[:3], boundary_batch)).all().item())
+
+    def test_dk_legacy_log_prob_matches_old_direct_gaussian(self):
+        mean = np.asarray([0.4, 1.2, 1.8, 2.1, 0.25], dtype=np.float64)
+        states_torch = torch.randn(3, 7, dtype=torch.float)
+        actions_torch = torch.tensor(
+            [
+                [0.5, 1.0, 1.5, 2.0, 0.2],
+                [0.8, 1.3, 1.7, 2.2, 0.4],
+                [0.3, 1.1, 1.6, 2.3, 0.6],
+            ],
+            dtype=torch.float,
+        )
+        legacy_policy = HeuristicGaussianPolicy(
+            lambda state: mean,
+            5,
+            "cpu",
+            transform_kind="mimo",
+            actor_distribution="legacy",
+        )
+
+        mu = torch.tensor(np.tile(mean, (3, 1)), dtype=torch.float)
+        std = torch.exp(legacy_policy.log_std).view(1, -1).expand_as(mu)
+        expected = torch.distributions.normal.Normal(mu, std).log_prob(actions_torch).sum(dim=1)
+
+        self.assertEqual(legacy_policy.actor_distribution, LEGACY_ACTOR_DISTRIBUTION)
+        self.assertTrue(torch.allclose(legacy_policy.log_prob_batch(states_torch, actions_torch), expected))
+
+        squashed_policy = HeuristicGaussianPolicy(
+            lambda state: mean,
+            5,
+            "cpu",
+            transform_kind="mimo",
+            actor_distribution="squashed",
+        )
+        self.assertEqual(squashed_policy.actor_distribution, SQUASHED_ACTOR_DISTRIBUTION)
+        self.assertFalse(torch.allclose(squashed_policy.log_prob_batch(states_torch, actions_torch), expected))
+
+    def test_build_dk_policy_uses_legacy_actor_distribution(self):
+        class FakeMimoEnv:
+            UE_num = 4
+            action_dim = 5
+
+        states_torch = torch.randn(2, 7, dtype=torch.float)
+        actions_torch = torch.full((2, 5), 0.5, dtype=torch.float)
+        policy = _build_dk_policy("MIMO", FakeMimoEnv(), "cpu", 3, actor_distribution="legacy")
+
+        means = []
+        for idx in range(states_torch.shape[0]):
+            means.append(policy.mean_action(states_torch[idx].detach().cpu().numpy()))
+        mu = torch.tensor(np.asarray(means, dtype=np.float64), dtype=torch.float)
+        std = torch.exp(policy.log_std).view(1, -1).expand_as(mu)
+        expected = torch.distributions.normal.Normal(mu, std).log_prob(actions_torch).sum(dim=1)
+
+        self.assertEqual(policy.actor_distribution, LEGACY_ACTOR_DISTRIBUTION)
+        self.assertTrue(torch.allclose(policy.log_prob_batch(states_torch, actions_torch), expected))
 
 
 if __name__ == "__main__":

@@ -43,6 +43,16 @@ DEFAULT_RHO_SCHEDULER = "power"
 DEFAULT_RHO_MIN_NEW_ACTOR = 0.2
 DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
 DEFAULT_FREEZE_RHO_EPISODE_COUNT = 0
+DEFAULT_ACTOR_DISTRIBUTION = "squashed"
+DEFAULT_XI_POW = 0.1
+DEFAULT_RHO_BETA_PEAK_EPISODE = 15
+DEFAULT_RHO_BETA_PEAK_VALUE = 0.5
+DEFAULT_RHO_BETA_END_VALUE = 0.005
+DEFAULT_RHO_BETA_PEAK_INIT = 1.0
+DEFAULT_RHO_BETA_PEAK_FINAL_RATIO = 0.35
+DEFAULT_RHO_BETA_MIN = 0.05
+DEFAULT_RHO_RESTART_ROUNDS = 4
+DEFAULT_RHO_PERIOD_MULT = 2
 
 DEFAULT_OLD_POLICY_SEED = 3
 OLD_POLICY_BQ_LIST = [(100, 1)]
@@ -85,6 +95,7 @@ def build_python_config():
         "rho_restart_rounds": int(DEFAULT_RHO_RESTART_ROUNDS),
         "rho_period_mult": int(DEFAULT_RHO_PERIOD_MULT),
         "device": str(DEVICE),
+        "actor_distribution": str(DEFAULT_ACTOR_DISTRIBUTION),
         "old_policies": None,
         "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
         "old_policy_pretrain_episode": int(OLD_POLICY_PRETRAIN_EPISODE),
@@ -494,6 +505,7 @@ def build_parser():
     parser.add_argument("--rho-restart-rounds", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--rho-period-mult", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--actor-distribution", dest="actor_distribution", type=str, choices=["squashed", "legacy"], default=argparse.SUPPRESS)
     parser.add_argument("--old-policies", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-seed", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)

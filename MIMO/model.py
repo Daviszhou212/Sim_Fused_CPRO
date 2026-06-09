@@ -12,8 +12,10 @@ ACTION_INVERSE_EPS = 1e-6
 MIMO_POWER_MAX = 2.5
 # CLQR 动作的对称裁剪边界。
 CLQR_ACTION_MAX = 1.5
-# 当前 actor 概率分布版本，用于 checkpoint 记录与旧 checkpoint warning。
-ACTOR_DISTRIBUTION = "squashed_gaussian_v1"
+# actor 概率分布版本，用于入口选择与 checkpoint 记录。
+SQUASHED_ACTOR_DISTRIBUTION = "squashed_gaussian_v1"
+LEGACY_ACTOR_DISTRIBUTION = "legacy_bounded_mean_gaussian_v0"
+ACTOR_DISTRIBUTION = SQUASHED_ACTOR_DISTRIBUTION
 # MIMO actor 默认隐藏层配置；长度表示层数，元素值表示各层宽度。
 DEFAULT_MIMO_ACTOR_HIDDEN_DIMS = (128, 128)
 # 旧 checkpoint 未记录结构时，按历史两层 128 口径解释。
@@ -32,6 +34,33 @@ def _expand_std(log_std, reference_torch):
 	if reference_torch.dim() <= 1:
 		return std
 	return std.view(1, -1).expand(reference_torch.shape[0], -1)
+
+
+def normalize_actor_distribution(actor_distribution=None):
+	if actor_distribution is None:
+		return SQUASHED_ACTOR_DISTRIBUTION
+	text = str(actor_distribution).strip().lower()
+	aliases = {
+		"": SQUASHED_ACTOR_DISTRIBUTION,
+		"squashed": SQUASHED_ACTOR_DISTRIBUTION,
+		SQUASHED_ACTOR_DISTRIBUTION: SQUASHED_ACTOR_DISTRIBUTION,
+		"legacy": LEGACY_ACTOR_DISTRIBUTION,
+		"legacy_gaussian": LEGACY_ACTOR_DISTRIBUTION,
+		LEGACY_ACTOR_DISTRIBUTION: LEGACY_ACTOR_DISTRIBUTION,
+	}
+	if text not in aliases:
+		raise ValueError(
+			"actor_distribution must be one of 'squashed' or 'legacy'. got {0!r}".format(actor_distribution)
+		)
+	return aliases[text]
+
+
+def _direct_gaussian_log_prob(loc_torch, log_std_torch, action_torch):
+	dist = torch.distributions.normal.Normal(loc_torch, _expand_std(log_std_torch, loc_torch))
+	log_prob = dist.log_prob(action_torch).sum(dim=-1)
+	if log_prob.dim() == 0:
+		return log_prob.view(1)
+	return log_prob
 
 
 def _as_feature_mask(reference_torch, indices):
@@ -58,6 +87,10 @@ def mimo_transform_raw_action(raw_action_torch, reg_indices=None):
 	power_action = ACTION_EPS + (MIMO_POWER_MAX - ACTION_EPS) * torch.sigmoid(raw_action_torch)
 	reg_action = F.softplus(raw_action_torch) + ACTION_EPS
 	return torch.where(reg_mask, reg_action, power_action)
+
+
+def mimo_legacy_bounded_mean(raw_action_torch):
+	return MIMO_POWER_MAX * torch.sigmoid(raw_action_torch)
 
 
 def mimo_inverse_action_and_log_det(action_torch, reg_indices=None, clamp_to_support=False):
@@ -167,7 +200,14 @@ def get_ctde_mimo_actor_hidden_dims(hidden_dims=None):
 	return normalize_hidden_dims(source, "ctde_mimo_actor_hidden_dims")
 
 
-def get_action_transform_metadata():
+def get_action_transform_metadata(actor_distribution=None):
+	actor_distribution = normalize_actor_distribution(actor_distribution)
+	if actor_distribution == LEGACY_ACTOR_DISTRIBUTION:
+		return {
+			"mimo_power": ["legacy_bounded_mean_gaussian", 0.0, MIMO_POWER_MAX],
+			"mimo_reg": ["legacy_bounded_mean_gaussian", 0.0, MIMO_POWER_MAX],
+			"clqr": ["legacy_direct_gaussian"],
+		}
 	return {
 		"mimo_power": ["sigmoid_interval", ACTION_EPS, MIMO_POWER_MAX],
 		"mimo_reg": ["softplus_positive", ACTION_EPS],
@@ -277,6 +317,7 @@ class GaussianPolicy_MIMO(nn.Module):
 		self.action_dim = action_dim
 		self.num_new_data = num_new_data
 		self.device = device
+		self.actor_distribution = SQUASHED_ACTOR_DISTRIBUTION
 		self.to(self.device)
 
 	def forward(self, state, action):
@@ -284,7 +325,7 @@ class GaussianPolicy_MIMO(nn.Module):
 
 	def mean_action_tensor(self, state_torch):
 		self.net.train()
-		return mimo_transform_raw_action(self.net(state_torch), reg_indices=self._reg_indices())
+		return mimo_legacy_bounded_mean(self.net(state_torch))
 
 	def evaluate_action_with_log_std(self, state_torch, action_torch, log_std_torch, clamp_to_support=False):
 		self.net.train()
@@ -333,6 +374,33 @@ class GaussianPolicy_MIMO(nn.Module):
 		return action.detach().cpu().numpy()
 	
 	
+class LegacyGaussianPolicy_MIMO(GaussianPolicy_MIMO):
+	def __init__(self, state_dim, action_dim, device, num_new_data, hidden_dims=None):
+		super(LegacyGaussianPolicy_MIMO, self).__init__(state_dim, action_dim, device, num_new_data, hidden_dims=hidden_dims)
+		self.actor_distribution = LEGACY_ACTOR_DISTRIBUTION
+
+	def mean_action_tensor(self, state_torch):
+		self.net.train()
+		return mimo_legacy_bounded_mean(self.net(state_torch))
+
+	def evaluate_action_with_log_std(self, state_torch, action_torch, log_std_torch, clamp_to_support=False):
+		_ = clamp_to_support
+		self.net.train()
+		loc = self.mean_action_tensor(state_torch)
+		return _direct_gaussian_log_prob(loc, log_std_torch, action_torch)
+
+	def sample_action_tensor(self, state_torch, reparameterized=False, use_mean=False, track_log_std_grad=True):
+		self.net.train()
+		self.log_std.requires_grad = bool(track_log_std_grad)
+		loc = self.mean_action_tensor(state_torch)
+		if use_mean:
+			return loc
+		gaussian_ = torch.distributions.normal.Normal(loc, _expand_std(self.log_std, loc))
+		if reparameterized:
+			return gaussian_.rsample()
+		return gaussian_.sample()
+
+
 class MLP_Gaussian_MIMO(nn.Module):
 	def __init__(self, state_dim, hidden_dims, action_dim, device):
 		super(MLP_Gaussian_MIMO, self).__init__()
@@ -414,6 +482,7 @@ class GaussianPolicy_MultiCellMIMO_CTDE(nn.Module):
 		self.action_dim = int(action_dim)
 		self.num_new_data = num_new_data
 		self.device = device
+		self.actor_distribution = SQUASHED_ACTOR_DISTRIBUTION
 		self.to(self.device)
 
 	def forward(self, state, action):
@@ -493,6 +562,72 @@ class GaussianPolicy_MultiCellMIMO_CTDE(nn.Module):
 					std = std.view(1, -1).expand(raw_loc.shape[0], -1)
 				raw_action = torch.distributions.normal.Normal(raw_loc, std).sample()
 				action = mimo_transform_raw_action(raw_action, reg_indices=self._cell_reg_indices())
+		return action.detach().cpu().numpy()
+
+
+class LegacyGaussianPolicy_MultiCellMIMO_CTDE(GaussianPolicy_MultiCellMIMO_CTDE):
+	def __init__(
+		self,
+		state_dim,
+		action_dim,
+		device,
+		num_new_data,
+		cell_num,
+		user_per_cell,
+		Nt,
+		hidden_dims=None,
+	):
+		super(LegacyGaussianPolicy_MultiCellMIMO_CTDE, self).__init__(
+			state_dim,
+			action_dim,
+			device,
+			num_new_data,
+			cell_num=cell_num,
+			user_per_cell=user_per_cell,
+			Nt=Nt,
+			hidden_dims=hidden_dims,
+		)
+		self.actor_distribution = LEGACY_ACTOR_DISTRIBUTION
+
+	def mean_action_tensor(self, state_torch):
+		self.net.train()
+		return mimo_transform_raw_action(self.net(state_torch), reg_indices=self._reg_indices())
+
+	def evaluate_action_with_log_std(self, state_torch, action_torch, log_std_torch, clamp_to_support=False):
+		_ = clamp_to_support
+		self.net.train()
+		loc = self.mean_action_tensor(state_torch)
+		return _direct_gaussian_log_prob(loc, log_std_torch, action_torch)
+
+	def sample_action_tensor(self, state_torch, reparameterized=False, use_mean=False, track_log_std_grad=True):
+		self.net.train()
+		self.log_std.requires_grad = bool(track_log_std_grad)
+		loc = self.mean_action_tensor(state_torch)
+		if use_mean:
+			return loc
+		gaussian_ = torch.distributions.normal.Normal(loc, _expand_std(self.log_std, loc))
+		if reparameterized:
+			return gaussian_.rsample()
+		return gaussian_.sample()
+
+	def sample_cell_action(self, local_state, cell_index=0, use_mean=True):
+		self.net.eval()
+		local_state_torch = torch.tensor(local_state, dtype=torch.float, device=self.device)
+		with torch.no_grad():
+			raw_loc = self.net.local_forward(local_state_torch)
+			loc = mimo_legacy_bounded_mean(raw_loc)
+			if use_mean:
+				action = loc
+			else:
+				cell = int(cell_index)
+				if cell < 0 or cell >= self.cell_num:
+					raise ValueError("cell_index out of range: {0}".format(cell_index))
+				start = cell * self.cell_action_dim
+				end = start + self.cell_action_dim
+				std = torch.exp(self.log_std.detach()[start:end])
+				if loc.dim() > 1:
+					std = std.view(1, -1).expand(loc.shape[0], -1)
+				action = torch.distributions.normal.Normal(loc, std).sample()
 		return action.detach().cpu().numpy()
 
 
@@ -605,6 +740,7 @@ class GaussianPolicy_CLQR(nn.Module):
 		self.action_dim = action_dim
 		self.num_new_data = num_new_data
 		self.device = device
+		self.actor_distribution = SQUASHED_ACTOR_DISTRIBUTION
 		self.to(self.device)
 
 	def forward(self, state, action):
@@ -657,6 +793,33 @@ class GaussianPolicy_CLQR(nn.Module):
 		return action.detach().cpu().numpy()
 
 
+class LegacyGaussianPolicy_CLQR(GaussianPolicy_CLQR):
+	def __init__(self, state_dim, action_dim, device, num_new_data):
+		super(LegacyGaussianPolicy_CLQR, self).__init__(state_dim, action_dim, device, num_new_data)
+		self.actor_distribution = LEGACY_ACTOR_DISTRIBUTION
+
+	def mean_action_tensor(self, state_torch):
+		self.net.train()
+		return self.net(state_torch)
+
+	def evaluate_action_with_log_std(self, state_torch, action_torch, log_std_torch, clamp_to_support=False):
+		_ = clamp_to_support
+		self.net.train()
+		loc = self.mean_action_tensor(state_torch)
+		return _direct_gaussian_log_prob(loc, log_std_torch, action_torch)
+
+	def sample_action_tensor(self, state_torch, reparameterized=False, use_mean=False, track_log_std_grad=True):
+		self.net.train()
+		self.log_std.requires_grad = bool(track_log_std_grad)
+		loc = self.mean_action_tensor(state_torch)
+		if use_mean:
+			return loc
+		gaussian_ = torch.distributions.normal.Normal(loc, _expand_std(self.log_std, loc))
+		if reparameterized:
+			return gaussian_.rsample()
+		return gaussian_.sample()
+
+
 class MLP_Gaussian_CLQR(nn.Module):
 	def __init__(self, state_dim, fc1_dim, fc2_dim, action_dim, device):
 		super(MLP_Gaussian_CLQR, self).__init__()
@@ -686,4 +849,44 @@ class MLP_Gaussian_CLQR(nn.Module):
 		x = torch.tanh(x)
 		mu = self.fc3(x)
 		return mu
+
+
+def build_gaussian_policy(
+	example_name,
+	state_dim,
+	action_dim,
+	device,
+	num_new_data,
+	actor_distribution=None,
+	cell_num=None,
+	user_per_cell=None,
+	Nt=None,
+	hidden_dims=None,
+):
+	actor_distribution = normalize_actor_distribution(actor_distribution)
+	is_mimo = "MIMO" in str(example_name).upper()
+	is_ctde = (cell_num is not None) or (user_per_cell is not None) or (Nt is not None)
+	if is_mimo and is_ctde:
+		if cell_num is None or user_per_cell is None or Nt is None:
+			raise ValueError("CTDE MIMO policy requires cell_num, user_per_cell, and Nt.")
+		policy_cls = (
+			GaussianPolicy_MultiCellMIMO_CTDE
+			if actor_distribution == SQUASHED_ACTOR_DISTRIBUTION
+			else LegacyGaussianPolicy_MultiCellMIMO_CTDE
+		)
+		return policy_cls(
+			state_dim,
+			action_dim,
+			device,
+			num_new_data,
+			cell_num=cell_num,
+			user_per_cell=user_per_cell,
+			Nt=Nt,
+			hidden_dims=hidden_dims,
+		)
+	if is_mimo:
+		policy_cls = GaussianPolicy_MIMO if actor_distribution == SQUASHED_ACTOR_DISTRIBUTION else LegacyGaussianPolicy_MIMO
+		return policy_cls(state_dim, action_dim, device, num_new_data, hidden_dims=hidden_dims)
+	policy_cls = GaussianPolicy_CLQR if actor_distribution == SQUASHED_ACTOR_DISTRIBUTION else LegacyGaussianPolicy_CLQR
+	return policy_cls(state_dim, action_dim, device, num_new_data)
 

@@ -3,10 +3,8 @@ from environment import Environment_MultiCellMIMO_CTDE
 from environment import Environment_CLQR
 from critic_opt import Critic
 from utils import update_policy
-from model import GaussianPolicy_MIMO
-from model import GaussianPolicy_MultiCellMIMO_CTDE
-from model import GaussianPolicy_CLQR
-from model import ACTOR_DISTRIBUTION, get_action_transform_metadata
+from model import build_gaussian_policy
+from model import get_action_transform_metadata, normalize_actor_distribution
 from model import get_mimo_actor_hidden_dims
 from buffer import DataStorage
 from collections import deque
@@ -129,8 +127,10 @@ def _save_sldac_checkpoint(
 	checkpoint = {
 		"schema_version": CHECKPOINT_SCHEMA_VERSION,
 		"algorithm": "SLDAC",
-		"actor_distribution": ACTOR_DISTRIBUTION,
-		"action_transform": get_action_transform_metadata(),
+		"actor_distribution": getattr(actor, "actor_distribution", normalize_actor_distribution(getattr(args, "actor_distribution", None))),
+		"action_transform": get_action_transform_metadata(
+			getattr(actor, "actor_distribution", getattr(args, "actor_distribution", None))
+		),
 		"example_name": str(example_name),
 		"run_tag": str(run_tag),
 		"seed": int(seed),
@@ -190,6 +190,7 @@ def SLDAC_main(args, example_name):
 	total_episodes = int(getattr(args, "episode", 0))
 	if total_episodes <= 0:
 		total_episodes = int(getattr(args, "num_update_time", 0) / max(update_time_per_episode, 1))
+	actor_distribution = normalize_actor_distribution(getattr(args, "actor_distribution", None))
 
 	reward_average_save = []
 	cost_average_save = []
@@ -210,7 +211,8 @@ def SLDAC_main(args, example_name):
 		action_dim = env.action_dim
 		constraint_dim = env.constraint_dim
 		constr_lim = constraint_limit * np.ones(constraint_dim)
-		actor = GaussianPolicy_MultiCellMIMO_CTDE(
+		actor = build_gaussian_policy(
+			example_name,
 			state_dim,
 			action_dim,
 			device,
@@ -218,6 +220,7 @@ def SLDAC_main(args, example_name):
 			cell_num=cell_num,
 			user_per_cell=user_per_cell,
 			Nt=Nt,
+			actor_distribution=actor_distribution,
 		)
 	elif 'MIMO' in example_name:
 		Nt, UE_num = 8, 4  # The number of antennas and users.
@@ -226,13 +229,27 @@ def SLDAC_main(args, example_name):
 		env = Environment_MIMO(seed=seed, Nt=Nt, UE_num=UE_num)
 		constraint_dim = UE_num
 		constr_lim = [1.2, 1.2, 1.2, 1.2]
-		actor = GaussianPolicy_MIMO(state_dim, action_dim, device, grad_T)
+		actor = build_gaussian_policy(
+			example_name,
+			state_dim,
+			action_dim,
+			device,
+			grad_T,
+			actor_distribution=actor_distribution,
+		)
 	else:
 		state_dim, action_dim = 15, 4
 		env = Environment_CLQR(seed=seed, state_dim=state_dim, action_dim=action_dim)
 		constraint_dim = 1
 		constr_lim = 380 * np.ones(constraint_dim)
-		actor = GaussianPolicy_CLQR(state_dim, action_dim, device, grad_T)
+		actor = build_gaussian_policy(
+			example_name,
+			state_dim,
+			action_dim,
+			device,
+			grad_T,
+			actor_distribution=actor_distribution,
+		)
 
 	buffer = DataStorage(T, num_new_data, state_dim, action_dim, constraint_dim, window, 1)
 	critic = Critic(example_name, grad_T, state_dim, action_dim, constraint_dim, Q_update_time, device)

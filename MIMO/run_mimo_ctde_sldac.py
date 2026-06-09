@@ -44,6 +44,7 @@ DEFAULT_GAMMA_POW_COST = 0.3
 DEFAULT_TAU_REWARD = 1.0
 DEFAULT_TAU_COST = 1.0
 DEFAULT_DEVICE = "cpu"
+DEFAULT_ACTOR_DISTRIBUTION = "squashed"
 DEFAULT_CHECKPOINT_ROOT = "checkpoints/SLDAC_CTDE"
 DEFAULT_CHECKPOINT_INTERVAL_EPISODES = 10
 DEFAULT_SAVE_FINAL_CHECKPOINT = True
@@ -147,6 +148,7 @@ def build_python_config():
         "tau_reward": float(DEFAULT_TAU_REWARD),
         "tau_cost": float(DEFAULT_TAU_COST),
         "device": str(DEFAULT_DEVICE),
+        "actor_distribution": str(DEFAULT_ACTOR_DISTRIBUTION),
         "checkpoint_root": str(DEFAULT_CHECKPOINT_ROOT),
         "checkpoint_interval_episodes": int(DEFAULT_CHECKPOINT_INTERVAL_EPISODES),
         "save_final_checkpoint": int(DEFAULT_SAVE_FINAL_CHECKPOINT),
@@ -176,6 +178,7 @@ def build_parser():
     parser.add_argument("--tau-reward", dest="tau_reward", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--tau-cost", dest="tau_cost", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--actor-distribution", dest="actor_distribution", type=str, choices=["squashed", "legacy"], default=argparse.SUPPRESS)
     parser.add_argument("--checkpoint-root", dest="checkpoint_root", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--checkpoint-interval-episodes", dest="checkpoint_interval_episodes", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--save-final-checkpoint", dest="save_final_checkpoint", type=int, choices=[0, 1], default=argparse.SUPPRESS)

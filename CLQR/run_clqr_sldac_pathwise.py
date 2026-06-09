@@ -34,6 +34,7 @@ DEFAULT_GAMMA_POW_COST = 0.27
 DEFAULT_TAU_REWARD = 10.0
 DEFAULT_TAU_COST = 10.0
 DEFAULT_DEVICE = "cpu"
+DEFAULT_ACTOR_DISTRIBUTION = "squashed"
 DEFAULT_POLICY_GRADIENT_MODE = "stochastic_pathwise"
 DEFAULT_BEHAVIOR_POLICY_MODE = "gaussian_sample"
 DEFAULT_NORMALIZE_ACTOR_GRADIENT = False
@@ -74,6 +75,7 @@ def build_python_config():
         "tau_reward": float(DEFAULT_TAU_REWARD),
         "tau_cost": float(DEFAULT_TAU_COST),
         "device": str(DEFAULT_DEVICE),
+        "actor_distribution": str(DEFAULT_ACTOR_DISTRIBUTION),
         "policy_gradient_mode": str(DEFAULT_POLICY_GRADIENT_MODE),
         "behavior_policy_mode": str(DEFAULT_BEHAVIOR_POLICY_MODE),
         "normalize_actor_gradient": int(DEFAULT_NORMALIZE_ACTOR_GRADIENT),
@@ -206,6 +208,7 @@ def build_parser():
     parser.add_argument("--tau_reward", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--tau_cost", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--actor_distribution", type=str, choices=["squashed", "legacy"], default=argparse.SUPPRESS)
     parser.add_argument("--policy_gradient_mode", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--behavior_policy_mode", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--normalize_actor_gradient", type=int, choices=[0, 1], default=argparse.SUPPRESS)

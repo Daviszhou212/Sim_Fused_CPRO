@@ -57,6 +57,7 @@ DEFAULT_TAU_COST = 1.0
 DEFAULT_RHO_MIN_NEW_ACTOR = 0.2
 DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
 DEFAULT_FREEZE_RHO_EPISODE_COUNT = 0
+DEFAULT_ACTOR_DISTRIBUTION = "squashed"
 
 # old policy 选择：显式指定 SLDAC checkpoint，不参与任何参数同步。
 DEFAULT_OLD_POLICY_SEED = 3
@@ -97,6 +98,7 @@ def build_python_config():
         "rho_min_old_policy": float(DEFAULT_RHO_MIN_OLD_POLICY),
         "freeze_rho_episode_count": int(DEFAULT_FREEZE_RHO_EPISODE_COUNT),
         "device": str(DEVICE),
+        "actor_distribution": str(DEFAULT_ACTOR_DISTRIBUTION),
         "old_policies": None,
         "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
         "old_policy_pretrain_episode": int(OLD_POLICY_PRETRAIN_EPISODE),
@@ -542,6 +544,7 @@ def build_parser():
     parser.add_argument("--rho-min-old-policy", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--freeze-rho-episode-count", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--actor-distribution", dest="actor_distribution", type=str, choices=["squashed", "legacy"], default=argparse.SUPPRESS)
     parser.add_argument("--old-policies", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-seed", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)

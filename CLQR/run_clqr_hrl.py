@@ -41,6 +41,7 @@ DEFAULT_TAU_COST = 10.0
 DEFAULT_RHO_MIN_NEW_ACTOR = 1e-4
 DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
 DEFAULT_DEVICE = "cpu"
+DEFAULT_ACTOR_DISTRIBUTION = "squashed"
 
 
 EXAMPLE_NAME = "CLQR"
@@ -79,6 +80,7 @@ def build_python_config():
         "rho_min_new_actor": float(DEFAULT_RHO_MIN_NEW_ACTOR),
         "rho_min_old_policy": float(DEFAULT_RHO_MIN_OLD_POLICY),
         "device": str(DEFAULT_DEVICE),
+        "actor_distribution": str(DEFAULT_ACTOR_DISTRIBUTION),
         "old_policies": None,
         "old_policy_seed": int(DEFAULT_OLD_POLICY_SEED),
         "old_policy_pretrain_episode": int(OLD_POLICY_PRETRAIN_EPISODE),
@@ -459,6 +461,7 @@ def build_parser():
     parser.add_argument("--rho-min-new-actor", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-min-old-policy", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
+    parser.add_argument("--actor-distribution", dest="actor_distribution", type=str, choices=["squashed", "legacy"], default=argparse.SUPPRESS)
     parser.add_argument("--old-policies", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-seed", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--old-policy-pretrain-episode", type=int, default=argparse.SUPPRESS)
