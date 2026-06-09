@@ -22,7 +22,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # 默认实验设置：论文口径优先，固定使用单约束 CLQR。
 DEFAULT_SEED = 0
 DEFAULT_SEEDS = (DEFAULT_SEED,)
-DEFAULT_DEVICE = "cpu"
+DEFAULT_DEVICE = "auto"
 DEFAULT_STATE_DIM = 15
 DEFAULT_ACTION_DIM = 4
 DEFAULT_T = 500

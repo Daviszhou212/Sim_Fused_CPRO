@@ -22,7 +22,7 @@ from seed_utils import (
 
 EXAMPLE_NAME = "CLQR"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DEVICE = "cpu"
+DEFAULT_DEVICE = "auto"
 ALGORITHM_NAME = "Fused_CPRO_CosRho"
 ALGORITHM_LABEL = "Fused-CPRO-CosRho"
 RHO_SCHEDULER = "cosine_restart_decay"

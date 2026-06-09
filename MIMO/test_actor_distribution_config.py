@@ -14,6 +14,7 @@ for path in (THIS_DIR, CLQR_DIR):
 sys.path.insert(0, CLQR_DIR)
 sys.path.insert(0, THIS_DIR)
 
+from seed_utils import resolve_torch_device  # noqa: E402
 from model import (  # noqa: E402
     LEGACY_ACTOR_DISTRIBUTION,
     MIMO_POWER_MAX,
@@ -35,8 +36,28 @@ GAUSSIAN_ENTRY_MODULES = (
     "run_mimo_prcrl",
 )
 
+GPU_AWARE_ENTRY_MODULES = GAUSSIAN_ENTRY_MODULES + (
+    "run_mimo_acpo",
+    "run_mimo_dk",
+)
+
 
 class ActorDistributionConfigTest(unittest.TestCase):
+    def test_resolve_torch_device_prefers_cuda_in_auto_mode(self):
+        self.assertEqual(resolve_torch_device(None, cuda_is_available=lambda: True), "cuda")
+        self.assertEqual(resolve_torch_device("auto", cuda_is_available=lambda: True), "cuda")
+        self.assertEqual(resolve_torch_device("gpu", cuda_is_available=lambda: True), "cuda")
+        self.assertEqual(resolve_torch_device("auto", cuda_is_available=lambda: False), "cpu")
+        self.assertEqual(resolve_torch_device("cuda", cuda_is_available=lambda: False), "cpu")
+        self.assertEqual(resolve_torch_device("cpu", cuda_is_available=lambda: True), "cpu")
+
+    def test_entry_defaults_use_auto_device(self):
+        for module_name in GPU_AWARE_ENTRY_MODULES:
+            with self.subTest(module=module_name):
+                module = importlib.import_module(module_name)
+                self.assertEqual(module.build_python_config()["device"], "auto")
+                self.assertIn("device", module.PROTECTED_CLI_FIELDS)
+
     def test_gaussian_entry_defaults_are_squashed(self):
         for module_name in GAUSSIAN_ENTRY_MODULES:
             with self.subTest(module=module_name):

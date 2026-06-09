@@ -17,7 +17,7 @@ from Fused_CPRO import DK_main
 EXAMPLE_NAME = "CLQR"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ALGORITHM_NAME = "DK"
-DEFAULT_DEVICE = "cpu"
+DEFAULT_DEVICE = "auto"
 
 # 固定实验组：默认与 CLQR Fused-CPRO/HRL 对齐，确保 compare 图直接兼容。
 DK_RUNS = [

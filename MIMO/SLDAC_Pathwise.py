@@ -3,6 +3,7 @@ from environment import Environment_CLQR
 from critic_opt import Critic
 from qprop_critic import QPropCritic
 from utils import update_policy
+from seed_utils import resolve_torch_device
 from model import build_gaussian_policy
 from model import get_action_transform_metadata, normalize_actor_distribution
 from model import get_mimo_actor_hidden_dims
@@ -648,9 +649,7 @@ def SLDAC_Pathwise_main(args, example_name):
 	seed = int(getattr(args, "seed", 0))
 	np.random.seed(seed)
 	torch.manual_seed(seed)
-	device = str(getattr(args, "device", "cpu")).lower()
-	if device == "cuda" and (not torch.cuda.is_available()):
-		device = "cpu"
+	device = resolve_torch_device(getattr(args, "device", None))
 
 	T = args.T
 	grad_T = args.grad_T

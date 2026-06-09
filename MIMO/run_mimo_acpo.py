@@ -22,7 +22,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # 顶部默认配置：与 MIMO2 当前主线实验口径保持一致。
 DEFAULT_SEED = 0
 DEFAULT_SEEDS = (DEFAULT_SEED,)
-DEFAULT_DEVICE = "cpu"
+DEFAULT_DEVICE = "auto"
 DEFAULT_NT = 8
 DEFAULT_UE_NUM = 4
 DEFAULT_T = 100

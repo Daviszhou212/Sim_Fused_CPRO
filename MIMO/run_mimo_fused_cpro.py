@@ -19,7 +19,7 @@ from run_mimo_sldac import _migrate_legacy_checkpoints
 # 固定场景：该入口仅运行 MIMO 的 Fused-CPRO。
 EXAMPLE_NAME = "MIMO"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEVICE = "cpu"
+DEVICE = "auto"
 ALGORITHM_NAME = "Fused_CPRO"
 
 # 固定实验组：分别对应四组 batchsize / q 配置。

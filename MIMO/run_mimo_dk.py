@@ -16,7 +16,7 @@ from Fused_CPRO import DK_main
 
 EXAMPLE_NAME = "MIMO"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEVICE = "cpu"
+DEVICE = "auto"
 ALGORITHM_NAME = "DK"
 
 # 固定实验组：默认与 MIMO Fused-CPRO/HRL 对齐，保证 compare 图直接可对比。

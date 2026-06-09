@@ -8,6 +8,7 @@ from scipy.optimize import minimize_scalar
 
 from environment import Environment_CLQR
 from model import GaussianPolicy_CLQR
+from seed_utils import resolve_torch_device
 
 
 # 数值稳定项，统一用于归一化、开方与除法。
@@ -524,8 +525,7 @@ def ACPO_main(args, example_name):
 
     seed = int(getattr(args, "seed", 0))
     _set_seed(seed)
-    requested_device = str(getattr(args, "device", "cpu")).lower()
-    device = "cuda" if (requested_device == "cuda" and torch.cuda.is_available()) else "cpu"
+    device = resolve_torch_device(getattr(args, "device", None))
 
     horizon = int(args.T)
     num_iterations = int(args.episode)

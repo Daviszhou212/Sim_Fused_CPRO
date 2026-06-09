@@ -18,7 +18,7 @@ from run_mimo_sldac import _migrate_legacy_checkpoints
 
 EXAMPLE_NAME = "MIMO"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEVICE = "cpu"
+DEVICE = "auto"
 ALGORITHM_NAME = "PRCRL"
 
 PRCRL_RUNS = [

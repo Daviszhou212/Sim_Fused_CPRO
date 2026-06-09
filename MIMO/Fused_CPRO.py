@@ -20,6 +20,7 @@ from model import (
 )
 from model import clqr_inverse_action_and_log_det, mimo_inverse_action_and_log_det
 from model import get_legacy_mimo_actor_hidden_dims, get_mimo_actor_hidden_dims, normalize_hidden_dims
+from seed_utils import resolve_torch_device
 
 
 # 策略库配置：每个场景固定使用 1 个 DK 策略 + 2 个镜像 SLDAC 策略。
@@ -1234,7 +1235,7 @@ def _maybe_initialize_new_actor_from_checkpoint(args, example_name, actor, state
 
 def _train_sldac_like_actor(args, example_name, seed):
     _set_seed(seed)
-    device = "cpu"
+    device = resolve_torch_device(getattr(args, "device", None))
     env, actor, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(
         example_name,
         seed,
@@ -1452,9 +1453,7 @@ def _select_policy_gradient_batch_impl(
 def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data):
     seed = int(getattr(args, "seed", 0))
     _set_seed(seed)
-    device = str(getattr(args, "device", "cpu")).lower()
-    if device == "cuda" and (not torch.cuda.is_available()):
-        device = "cpu"
+    device = resolve_torch_device(getattr(args, "device", None))
 
     t_horizon = int(args.T)
     grad_t = int(args.grad_T)
@@ -1791,9 +1790,7 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data):
 def _run_prcrl_main(args, example_name):
     seed = int(getattr(args, "seed", 0))
     _set_seed(seed)
-    device = str(getattr(args, "device", "cpu")).lower()
-    if device == "cuda" and (not torch.cuda.is_available()):
-        device = "cpu"
+    device = resolve_torch_device(getattr(args, "device", None))
 
     t_horizon = int(args.T)
     grad_t = int(args.grad_T)
@@ -2030,7 +2027,7 @@ def HRL_main(args, example_name):
 
 def _run_dk_main(args, example_name):
     seed = int(getattr(args, "seed", 0))
-    device = str(getattr(args, "device", "cpu"))
+    device = resolve_torch_device(getattr(args, "device", None))
     t_horizon = int(args.T)
     num_new_data = int(args.num_new_data)
     update_time_per_episode = int(args.update_time_per_episode)

@@ -1,11 +1,31 @@
 import argparse
+import importlib
+import os
+import sys
 import unittest
+
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+if THIS_DIR not in sys.path:
+    sys.path.insert(0, THIS_DIR)
 
 from seed_utils import (
     apply_python_config_priority,
     build_mat_metadata_from_args,
     format_ignored_cli_overrides,
+    resolve_torch_device,
     resolve_experiment_seeds,
+)
+
+GPU_AWARE_ENTRY_MODULES = (
+    "run_clqr_sldac",
+    "run_clqr_sldac_pathwise",
+    "run_clqr_fused_cpro",
+    "run_clqr_fused_cpro_cosrho",
+    "run_clqr_fused_cpro_rho_new",
+    "run_clqr_hrl",
+    "run_clqr_prcrl",
+    "run_clqr_acpo",
+    "run_clqr_dk",
 )
 
 
@@ -31,6 +51,21 @@ PROTECTED_CLI_FIELDS = tuple(build_python_config().keys())
 
 
 class CliConfigPriorityTest(unittest.TestCase):
+    def test_resolve_torch_device_prefers_cuda_in_auto_mode(self):
+        self.assertEqual(resolve_torch_device(None, cuda_is_available=lambda: True), "cuda")
+        self.assertEqual(resolve_torch_device("auto", cuda_is_available=lambda: True), "cuda")
+        self.assertEqual(resolve_torch_device("gpu", cuda_is_available=lambda: True), "cuda")
+        self.assertEqual(resolve_torch_device("auto", cuda_is_available=lambda: False), "cpu")
+        self.assertEqual(resolve_torch_device("cuda", cuda_is_available=lambda: False), "cpu")
+        self.assertEqual(resolve_torch_device("cpu", cuda_is_available=lambda: True), "cpu")
+
+    def test_entry_defaults_use_auto_device(self):
+        for module_name in GPU_AWARE_ENTRY_MODULES:
+            with self.subTest(module=module_name):
+                module = importlib.import_module(module_name)
+                self.assertEqual(module.build_python_config()["device"], "auto")
+                self.assertIn("device", module.PROTECTED_CLI_FIELDS)
+
     def test_python_config_wins_without_cli_args(self):
         args, ignored_options = apply_python_config_priority(
             argparse.Namespace(),

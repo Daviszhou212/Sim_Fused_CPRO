@@ -5,6 +5,26 @@ import sys
 import numpy as np
 
 
+def _cuda_available(cuda_is_available):
+    if callable(cuda_is_available):
+        return bool(cuda_is_available())
+    return bool(cuda_is_available)
+
+
+def resolve_torch_device(requested_device=None, cuda_is_available=None):
+    if cuda_is_available is None:
+        import torch
+
+        cuda_is_available = torch.cuda.is_available
+
+    device_text = "" if requested_device is None else str(requested_device).strip().lower()
+    if device_text in {"", "auto", "gpu"}:
+        return "cuda" if _cuda_available(cuda_is_available) else "cpu"
+    if device_text.startswith("cuda"):
+        return device_text if _cuda_available(cuda_is_available) else "cpu"
+    return device_text
+
+
 def _parse_positive_int(value, field_name, source_text):
     try:
         parsed = int(value)
