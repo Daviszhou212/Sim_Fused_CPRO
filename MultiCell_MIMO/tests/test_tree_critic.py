@@ -4,7 +4,7 @@ import torch
 
 
 class TreeCriticTest(unittest.TestCase):
-    def test_tree_critic_values_and_target_modes_are_finite(self):
+    def test_tree_critic_values_and_source_compatible_target_mode_are_finite(self):
         from MultiCell_MIMO.tree_critic import TreeMessageDifferentialCritic
 
         critic = TreeMessageDifferentialCritic(
@@ -30,19 +30,19 @@ class TreeCriticTest(unittest.TestCase):
             func_value,
             critic_target_mode="source_compatible",
         )
-        strict_target = critic.compute_td_target(
-            costs,
-            local_state,
-            action,
-            func_value,
-            critic_target_mode="tex_strict",
-        )
 
         self.assertEqual(online.shape, (4, 3))
         self.assertEqual(target_value.shape, (4, 3))
         self.assertEqual(source_target.shape, (4, 3))
-        self.assertEqual(strict_target.shape, (4, 3))
         self.assertTrue(torch.isfinite(online).all().item())
+        with self.assertRaises(ValueError):
+            critic.compute_td_target(
+                costs,
+                local_state,
+                action,
+                func_value,
+                critic_target_mode="tex_strict",
+            )
 
     def test_tree_critic_updates_averaged_encoder_and_heads(self):
         from MultiCell_MIMO.tree_critic import TreeMessageDifferentialCritic

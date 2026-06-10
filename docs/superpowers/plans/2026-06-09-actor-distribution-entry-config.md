@@ -72,7 +72,7 @@ Treat missing checkpoint distribution as legacy, instantiate old policies with t
 
 - [ ] **Step 1: Add `DEFAULT_ACTOR_DISTRIBUTION = "squashed"`**
 
-Add the field to SLDAC, SLDAC_Pathwise, Fused-CPRO, CosRho, RhoNew, HRL, PRCRL, and CTDE SLDAC entries.
+Add the field to SLDAC, SLDAC_Pathwise, Fused-CPRO, CosRho, RhoNew, HRL, and PRCRL entries.
 
 - [ ] **Step 2: Include it in `build_python_config()` and parser**
 
@@ -89,4 +89,4 @@ Compile modified Python modules and entries only.
 
 - [ ] **Step 2: Run focused unit tests**
 
-Run new actor config tests, squashed Gaussian tests, SLDAC pathwise tests, CTDE smoke unit test, and Fused rho bounds tests. Do not run training, plotting, or export scripts.
+Run new actor config tests, squashed Gaussian tests, SLDAC pathwise tests, and Fused rho bounds tests. Do not run training, plotting, or export scripts.

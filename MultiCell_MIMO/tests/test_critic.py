@@ -4,7 +4,7 @@ import torch
 
 
 class CriticTest(unittest.TestCase):
-    def test_dynamic_heads_and_target_modes(self):
+    def test_dynamic_heads_and_source_compatible_target_mode(self):
         from MultiCell_MIMO.critic import MultiHeadDifferentialCritic
 
         critic = MultiHeadDifferentialCritic(
@@ -28,19 +28,18 @@ class CriticTest(unittest.TestCase):
             func_value,
             critic_target_mode="source_compatible",
         )
-        strict_target = critic.compute_td_target(
-            costs,
-            next_state,
-            next_action,
-            func_value,
-            critic_target_mode="tex_strict",
-        )
 
         self.assertEqual(len(critic.heads), 5)
         self.assertEqual(source_target.shape, (5, 5))
-        self.assertEqual(strict_target.shape, (5, 5))
         self.assertTrue(torch.isfinite(source_target).all().item())
-        self.assertTrue(torch.isfinite(strict_target).all().item())
+        with self.assertRaises(ValueError):
+            critic.compute_td_target(
+                costs,
+                next_state,
+                next_action,
+                func_value,
+                critic_target_mode="tex_strict",
+            )
 
     def test_update_returns_finite_losses(self):
         from MultiCell_MIMO.critic import MultiHeadDifferentialCritic

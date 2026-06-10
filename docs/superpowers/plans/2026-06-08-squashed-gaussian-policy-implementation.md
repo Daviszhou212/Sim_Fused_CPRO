@@ -48,7 +48,7 @@ The user requested less unnecessary TDD ceremony. Do not create a red/green test
 - [x] Make `GaussianPolicy_MIMO.mean_action_tensor()` return transformed MIMO action: power in `(ACTION_EPS, 2.5)`, reg in `(ACTION_EPS, +inf)`.
 - [x] Make `GaussianPolicy_MIMO.sample_action_tensor()` sample raw Gaussian and return transformed action.
 - [x] Make `GaussianPolicy_MIMO.evaluate_action()` invert transformed actions and subtract the Jacobian log-det.
-- [x] Apply the same MIMO block transform to `GaussianPolicy_MultiCellMIMO_CTDE` in `MIMO3/model.py`, including `mean_cell_action_tensor()` and `sample_cell_action()`.
+- [x] Keep transformed Gaussian logic on the MIMO / CLQR actors that remain in the mainline.
 - [x] Make `GaussianPolicy_CLQR` use `1.5 * tanh(raw)` for mean/sample and transformed density for `evaluate_action()`.
 
 ### Task 3: Fused-CPRO Component Density

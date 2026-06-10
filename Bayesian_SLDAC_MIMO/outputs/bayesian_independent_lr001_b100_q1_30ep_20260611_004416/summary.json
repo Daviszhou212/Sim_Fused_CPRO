@@ -1,0 +1,93 @@
+{
+  "run_tag": "b100_q1",
+  "episode": 30,
+  "variants": [
+    {
+      "name": "ind_lr001_boot1_beta0",
+      "status": "ok",
+      "params": {
+        "ensemble_size": 5,
+        "ensemble_init_mode": "independent",
+        "bootstrap_mask_prob": 1.0,
+        "beta_uncertainty": 0.0,
+        "critic_lr_base": 0.01
+      },
+      "objective_final": 1.9273187149164726,
+      "objective_tail10_mean": 2.361803861513894,
+      "average_cost_violation_final": 0.01088327109349052,
+      "average_cost_violation_tail10_mean": 0.020026153761486774,
+      "worst_residual_final": 0.1669578492684664,
+      "worst_residual_tail10_mean": 0.13374935485154757,
+      "ensemble_q_std_objective_tail10_mean": 15.626924419403077,
+      "q_sat_tail10_mean": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cssca_status_counts": {
+        "feasible_update": 19,
+        "objective_dual_success": 280
+      }
+    },
+    {
+      "name": "ind_lr001_boot1_beta001",
+      "status": "ok",
+      "params": {
+        "ensemble_size": 5,
+        "ensemble_init_mode": "independent",
+        "bootstrap_mask_prob": 1.0,
+        "beta_uncertainty": 0.01,
+        "critic_lr_base": 0.01
+      },
+      "objective_final": 2.0010106849787848,
+      "objective_tail10_mean": 2.4900298449564,
+      "average_cost_violation_final": 0.01545745224287054,
+      "average_cost_violation_tail10_mean": 0.022034004364933125,
+      "worst_residual_final": 0.18402397889198543,
+      "worst_residual_tail10_mean": 0.1378443613323848,
+      "ensemble_q_std_objective_tail10_mean": 15.590347576141358,
+      "q_sat_tail10_mean": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cssca_status_counts": {
+        "feasible_update": 23,
+        "objective_dual_success": 276
+      }
+    },
+    {
+      "name": "ind_lr001_boot1_beta005",
+      "status": "ok",
+      "params": {
+        "ensemble_size": 5,
+        "ensemble_init_mode": "independent",
+        "bootstrap_mask_prob": 1.0,
+        "beta_uncertainty": 0.05,
+        "critic_lr_base": 0.01
+      },
+      "objective_final": 1.8165982545530388,
+      "objective_tail10_mean": 2.2230126290189585,
+      "average_cost_violation_final": 0.016081802604239304,
+      "average_cost_violation_tail10_mean": 0.02578805119154659,
+      "worst_residual_final": 0.1268991689195338,
+      "worst_residual_tail10_mean": 0.1311218326555981,
+      "ensemble_q_std_objective_tail10_mean": 15.409783840179443,
+      "q_sat_tail10_mean": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cssca_status_counts": {
+        "feasible_update": 17,
+        "objective_dual_success": 282
+      }
+    }
+  ]
+}

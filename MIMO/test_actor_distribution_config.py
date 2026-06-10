@@ -27,7 +27,6 @@ from model import (  # noqa: E402
 
 GAUSSIAN_ENTRY_MODULES = (
     "run_mimo_sldac",
-    "run_mimo_ctde_sldac",
     "run_mimo_sldac_pathwise",
     "run_mimo_fused_cpro",
     "run_mimo_fused_cpro_cosrho",

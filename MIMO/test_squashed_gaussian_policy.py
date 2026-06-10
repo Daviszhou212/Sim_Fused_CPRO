@@ -3,7 +3,6 @@ import unittest
 import numpy as np
 import torch
 
-from environment import Environment_MultiCellMIMO_CTDE
 from Fused_CPRO import (
     HeuristicGaussianPolicy,
     _build_dk_policy,
@@ -16,7 +15,6 @@ from model import (
     MIMO_POWER_MAX,
     SQUASHED_ACTOR_DISTRIBUTION,
     GaussianPolicy_MIMO,
-    GaussianPolicy_MultiCellMIMO_CTDE,
     mimo_inverse_action_and_log_det,
     mimo_transform_raw_action,
 )
@@ -57,33 +55,6 @@ class SquashedGaussianMimoTest(unittest.TestCase):
         raw_probe[:, -1] = 5.0
         transformed_probe = mimo_transform_raw_action(raw_probe)
         self.assertGreater(float(transformed_probe[0, -1].item()), MIMO_POWER_MAX)
-
-    def test_ctde_actor_global_and_cell_support(self):
-        env = Environment_MultiCellMIMO_CTDE(seed=3, Nt=4, cell_num=3, user_per_cell=2)
-        actor = GaussianPolicy_MultiCellMIMO_CTDE(
-            env.state_dim,
-            env.action_dim,
-            "cpu",
-            4,
-            cell_num=env.cell_num,
-            user_per_cell=env.user_per_cell,
-            Nt=env.Nt,
-        )
-        state_torch = torch.randn(4, env.state_dim, dtype=torch.float)
-        action_torch = actor.sample_action_tensor(state_torch, reparameterized=True)
-
-        for cell_idx in range(env.cell_num):
-            start = cell_idx * env.cell_action_dim
-            power = action_torch[:, start : start + env.user_per_cell]
-            reg = action_torch[:, start + env.user_per_cell]
-            self.assertTrue(torch.all(power > ACTION_EPS).item())
-            self.assertTrue(torch.all(power < MIMO_POWER_MAX).item())
-            self.assertTrue(torch.all(reg > ACTION_EPS).item())
-
-        local_action = actor.sample_cell_action(env.local_observation(1), cell_index=1, use_mean=True)
-        self.assertTrue(np.all(local_action[:-1] > ACTION_EPS))
-        self.assertTrue(np.all(local_action[:-1] < MIMO_POWER_MAX))
-        self.assertGreater(float(local_action[-1]), ACTION_EPS)
 
     def test_fused_mixture_keeps_logsumexp_and_log_std_grad(self):
         actor = GaussianPolicy_MIMO(state_dim=7, action_dim=5, device="cpu", num_new_data=4)

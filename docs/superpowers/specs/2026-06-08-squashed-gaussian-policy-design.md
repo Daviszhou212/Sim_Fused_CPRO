@@ -110,8 +110,8 @@ ACTION_INVERSE_EPS = 1e-6
 `GaussianPolicy_MIMO` / `GaussianPolicy_CLQR`。因此 actor 分布语义应该在
 actor 类内部统一，否则不同算法路径会出现采样和 log-prob 不一致。
 
-`MIMO3` 还存在 `GaussianPolicy_MultiCellMIMO_CTDE`。它当前只由
-`MIMO3/SLDAC.py` 的 `MIMO_CTDE` 路径使用，Fused-CPRO 主线不使用 CTDE。
+旧 `MIMO` 内嵌 CTDE prototype 已移除；多小区策略实验统一迁移到
+`MultiCell_MIMO/`，Fused-CPRO 主线不使用 CTDE actor。
 
 ### Fused-CPRO 独立 log-prob
 
@@ -125,12 +125,6 @@ MIMO 动作最后一维是 regularization factor：
 
 ```text
 [power_1, ..., power_UE, reg_factor]
-```
-
-CTDE MIMO 中每个 cell 都有一个 regularization factor：
-
-```text
-[cell0_power..., cell0_reg, cell1_power..., cell1_reg, ...]
 ```
 
 环境当前只要求它为正，没有显式上界。DK policy 当前把它固定为 `0.25`。
@@ -171,17 +165,6 @@ mean_action_tensor(state_torch)
 - `evaluate_action()` 接收 transformed action，并计算 transformed density 的 log-prob。
 - `log_std` 仍作为 actor 参数向量的一部分参与 SLDAC / Fused-CPRO 更新。
 
-`GaussianPolicy_MultiCellMIMO_CTDE` 的本地执行接口也纳入同一契约：
-
-```python
-mean_cell_action_tensor(local_state_torch)
-sample_cell_action(local_state, cell_index=0, use_mean=True)
-```
-
-这两个方法必须返回 transformed cell action。每个 cell block 内 power 使用
-`(ACTION_EPS, 2.5)`，最后一维 regularization factor 使用
-`softplus(raw) + ACTION_EPS`。
-
 ## Action Transform
 
 ### MIMO 单小区
@@ -206,19 +189,6 @@ regularization factor 使用 positive softplus transform：
 u_reg ~ Normal(loc_reg, std_reg)
 reg = softplus(u_reg) + ACTION_EPS
 ```
-
-### MIMO CTDE
-
-每个 cell 的 action block：
-
-```text
-[power_1, ..., power_K, reg_factor]
-```
-
-每个 block 内：
-
-- power 维使用 `(ACTION_EPS, 2.5)` sigmoid transform。
-- reg 维使用 `softplus(raw) + ACTION_EPS`。
 
 ### CLQR
 
@@ -411,7 +381,7 @@ legacy checkpoint loaded under squashed_gaussian_v1; behavior is not equivalent
 ### MIMO3
 
 - `MIMO3/model.py`
-  - 为 MIMO / MIMO_CTDE / CLQR actor 加入 transformed Gaussian 逻辑。
+  - 为 MIMO / CLQR actor 加入 transformed Gaussian 逻辑。
   - 将 MIMO 网络输出解释为 raw loc，不再在 network `forward()` 里直接返回 action-space mean。
   - `mean_action_tensor()` 负责返回 transformed mean action。
   - `evaluate_action()` 负责 inverse transform + log-det 修正。
@@ -465,11 +435,10 @@ legacy checkpoint loaded under squashed_gaussian_v1; behavior is not equivalent
 
 1. MIMO power sample 全部在 `(ACTION_EPS, 2.5)`。
 2. MIMO reg sample 全部大于 `ACTION_EPS`，且允许大于 `2.5`。
-3. MIMO CTDE 每个 cell 的 power / reg 维符合各自 support。
-4. CLQR sample 全部在 `(-1.5, 1.5)`。
-5. `evaluate_action()` 对 `sample_action_tensor()` 产生的动作返回 finite log-prob。
-6. `reparameterized=True` 时 transformed action 对 actor 参数可微。
-7. `use_mean=True` 返回 transformed mean action，而不是 raw loc。
+3. CLQR sample 全部在 `(-1.5, 1.5)`。
+4. `evaluate_action()` 对 `sample_action_tensor()` 产生的动作返回 finite log-prob。
+5. `reparameterized=True` 时 transformed action 对 actor 参数可微。
+6. `use_mean=True` 返回 transformed mean action，而不是 raw loc。
 8. 旧 checkpoint 结构加载后参数 shape 不变。
 9. `mean_cell_action_tensor()` 与 `sample_cell_action()` 返回 transformed cell action。
 10. raw/action round-trip 在 MIMO power、MIMO reg、CLQR 三类 transform 上成立。
@@ -516,7 +485,6 @@ python -m py_compile CLQR2\model.py CLQR2\SLDAC.py CLQR2\SLDAC_Pathwise.py CLQR2
 ```powershell
 python -m unittest MIMO3\test_sldac_pathwise.py
 python -m unittest MIMO3\test_qprop_critic.py
-python -m unittest MIMO3\test_ctde_mimo.py
 python -m unittest CLQR2\test_sldac_pathwise.py
 python -m unittest CLQR2\test_qprop_critic.py
 ```

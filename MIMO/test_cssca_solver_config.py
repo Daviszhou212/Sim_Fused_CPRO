@@ -13,7 +13,6 @@ if THIS_DIR not in sys.path:
 
 CSSCA_ENTRY_MODULES = (
     "run_mimo_sldac",
-    "run_mimo_ctde_sldac",
     "run_mimo_fused_cpro",
     "run_mimo_fused_cpro_cosrho",
     "run_mimo_fused_cpro_rho_new",

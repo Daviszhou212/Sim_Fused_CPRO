@@ -50,7 +50,7 @@ class SldacSmokeTest(unittest.TestCase):
         self._run_tiny_sldac({})
 
     def test_sldac_smoke_runs_with_tree_critic(self):
-        self._run_tiny_sldac({"critic_backend": "tree", "critic_target_mode": "tex_strict"})
+        self._run_tiny_sldac({"critic_backend": "tree"})
 
     def test_tree_critic_checkpoint_records_tree_modules(self):
         from MultiCell_MIMO.config import build_default_config
@@ -74,7 +74,6 @@ class SldacSmokeTest(unittest.TestCase):
                     "hidden_dims": (8,),
                     "critic_hidden_dims": (8,),
                     "critic_backend": "tree",
-                    "critic_target_mode": "tex_strict",
                     "save_final_checkpoint": 1,
                     "output_root": output_root,
                     "checkpoint_root": checkpoint_root,

@@ -2,7 +2,7 @@ import copy
 
 
 CRITIC_BACKENDS = ("centralized", "tree")
-CRITIC_TARGET_MODES = ("source_compatible", "tex_strict")
+CRITIC_TARGET_MODES = ("source_compatible",)
 ACTOR_PARAMETERIZATIONS = ("shared", "per_cell")
 LOG_STD_MODES = ("shared_cell", "joint")
 CSSCA_SOLVERS = ("lagrangian_dual", "cvx")
@@ -36,7 +36,7 @@ def build_default_config():
         "gamma_pow_cost": 0.3,
         "tau_objective": 1.0,
         "tau_constraint": 1.0,
-        # 模式开关：显式区分源码兼容 TD target 与 tex strict target。
+        # Critic TD target 固定使用 SLDAC 源码兼容口径：bootstrap 来自平滑 target critic。
         "critic_target_mode": "source_compatible",
         "critic_backend": "centralized",
         "actor_parameterization": "shared",

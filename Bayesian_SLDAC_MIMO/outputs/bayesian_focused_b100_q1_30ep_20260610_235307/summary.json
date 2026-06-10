@@ -1,0 +1,81 @@
+{
+  "run_tag": "b100_q1",
+  "episode": 30,
+  "variants": [
+    {
+      "name": "e2_beta0p0_boot1",
+      "params": {
+        "ensemble_size": 2,
+        "beta_uncertainty": 0.0,
+        "bootstrap_mask_prob": 1.0
+      },
+      "objective_final": 5.4577223175183605,
+      "objective_tail10_mean": 5.455796736271267,
+      "average_cost_final": 1.5536450683913092,
+      "average_cost_violation_final": 0.35364506839130927,
+      "average_cost_violation_tail10_mean": 0.37767035814954003,
+      "worst_residual_final": 1.769349266371791,
+      "worst_residual_tail10_mean": 1.9392520919196368,
+      "q_std_objective_tail10_mean": 200.0,
+      "q_std_constraints_tail10_mean": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cssca_status_counts": {
+        "feasible_update": 299
+      }
+    },
+    {
+      "name": "e2_beta0p01_boot1",
+      "params": {
+        "ensemble_size": 2,
+        "beta_uncertainty": 0.01,
+        "bootstrap_mask_prob": 1.0
+      },
+      "objective_final": 5.4577223175183605,
+      "objective_tail10_mean": 5.455796736271267,
+      "average_cost_final": 1.5536450683913092,
+      "average_cost_violation_final": 0.35364506839130927,
+      "average_cost_violation_tail10_mean": 0.37767035814954003,
+      "worst_residual_final": 1.769349266371791,
+      "worst_residual_tail10_mean": 1.9392520919196368,
+      "q_std_objective_tail10_mean": 200.0,
+      "q_std_constraints_tail10_mean": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cssca_status_counts": {
+        "feasible_update": 299
+      }
+    },
+    {
+      "name": "e2_beta0p05_boot1",
+      "params": {
+        "ensemble_size": 2,
+        "beta_uncertainty": 0.05,
+        "bootstrap_mask_prob": 1.0
+      },
+      "objective_final": 5.4577223175183605,
+      "objective_tail10_mean": 5.455796736271267,
+      "average_cost_final": 1.5536450683913092,
+      "average_cost_violation_final": 0.35364506839130927,
+      "average_cost_violation_tail10_mean": 0.37767035814954003,
+      "worst_residual_final": 1.769349266371791,
+      "worst_residual_tail10_mean": 1.9392520919196368,
+      "q_std_objective_tail10_mean": 200.0,
+      "q_std_constraints_tail10_mean": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cssca_status_counts": {
+        "feasible_update": 299
+      }
+    }
+  ]
+}

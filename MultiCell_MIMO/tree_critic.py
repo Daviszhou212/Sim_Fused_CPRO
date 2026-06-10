@@ -102,8 +102,6 @@ class TreeMessageDifferentialCritic:
         with torch.no_grad():
             if critic_target_mode == "source_compatible":
                 next_value = self.target_value(next_local_state, next_action)
-            elif critic_target_mode == "tex_strict":
-                next_value = self.online_value(next_local_state, next_action)
             else:
                 raise ValueError("unsupported critic_target_mode: {0}".format(critic_target_mode))
             return costs - func_value + next_value

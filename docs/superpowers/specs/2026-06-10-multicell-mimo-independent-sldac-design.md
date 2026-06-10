@@ -9,7 +9,7 @@
 当前仓库已有两类相关材料：
 
 - `MIMO/SLDAC.py`、`MIMO/critic_opt.py`、`MIMO/utils.py` 是 SLDAC 论文源码风格实现的当前主线版本。
-- `MIMO/environment.py` 和 `MIMO/run_mimo_ctde_sldac.py` 已有一个 `MIMO_CTDE` 多小区 prototype，但它仍复用现有 `MIMO` 算法栈，不满足本次“完整独立实现”的边界。
+- 旧 `MIMO` 内嵌多小区 prototype 已移除；多小区 CTDE / tree critic 场景统一落在 `MultiCell_MIMO/`。
 - `CMARL_revised_CN.tex` 将问题修正为 multi-agent infinite-horizon average-cost CMDP，并要求 critic 使用 SLDAC 的 average-cost differential Q 半梯度 TD 更新，actor 使用 CSSCA surrogate。
 
 本设计文档只定义新场景的工程边界与算法映射，不修改源码、不运行训练、不生成实验产物。
@@ -154,24 +154,19 @@ v1 默认把每个 `(cell,user)` 的 delay constraint 视为一个独立约束 h
 1. actor 按本地状态采样每个小区动作，拼接为 joint action。
 2. 环境推进一步，得到全局 next state、objective cost、每用户约束代价。
 3. buffer 保存 `(state, action, costs, next_state)`。
-4. 每轮 critic update 使用 average-cost Bellman target。为同时服务源码复现与
-   `.tex` 严格口径，v1 必须显式配置 `critic_target_mode`：
+4. 每轮 critic update 使用 average-cost Bellman target。论文中把 bootstrap 写成
+   online critic 的位置按笔误处理；实现统一使用 SLDAC 源码兼容口径：
 
 ```text
 source_compatible:
     y_k = C_k' - hat_J_k + stop_gradient(Qbar_k(next_state, next_action))
 
-tex_strict:
-    y_k = C_k' - hat_J_k + stop_gradient(Q_k(next_state, next_action))
-
 e_k = Q_k(state, action) - stop_gradient(y_k)
 ```
 
-`source_compatible` 是 v1 默认值，用来贴近现有 SLDAC 源码中
+`source_compatible` 是唯一支持的 critic target mode，用来贴近现有 SLDAC 源码中
 `target_net.forward(...).detach()` 与 `soft_update(target_net, net, gamma)`
-的行为。`tex_strict` 对应 `CMARL_revised_CN.tex` 的修正版表述：平滑 critic
-不作为 TD target，只用于 actor 梯度。两种模式都不含 discount factor；任何
-实验报告必须写明使用哪一种模式。
+的行为。该 target 不含 discount factor；任何实验报告只需记录该模式以便追溯。
 
 5. `hat_J` 使用 SLDAC 的递推平均：
 
@@ -201,8 +196,8 @@ Q_k([global_state, joint_action])
 ```
 
 每个 cost head 独立维护在线网络与平滑网络。在线网络用于半梯度 TD
-学习；平滑网络按 SLDAC 的递推平均维护，并由 `critic_target_mode` 决定是否
-参与 TD target。它不是 discounted DQN target network，也不引入折扣因子。
+学习；平滑网络按 SLDAC 的递推平均维护，并固定参与 TD target。它不是
+discounted DQN target network，也不引入折扣因子。
 
 ### Actor
 
@@ -314,7 +309,7 @@ bar_phi     = (1 - gamma_t) * bar_phi     + gamma_t * phi
 5. `test_critic.py`
    - critic 支持 `1 + N_cell * K_user` 个 head。
    - average-cost TD target 不含 discount factor。
-   - `source_compatible` 与 `tex_strict` 两种 target 模式分支明确。
+   - 仅 `source_compatible` target 模式合法；`tex_strict` 必须报错。
    - 平滑 critic 更新只按 `gamma_t` 做参数递推平均。
 
 6. `test_cssca.py`
@@ -339,8 +334,8 @@ bar_phi     = (1 - gamma_t) * bar_phi     + gamma_t * phi
 可以参考现有 SLDAC 源码的以下逻辑：
 
 - `func_value` / `hat_J` 递推平均。
-- differential Q TD target：`cost - func_value + next_Q`，但必须通过
-  `critic_target_mode` 明确区分源码兼容 target critic 与 `.tex` strict online target。
+- differential Q TD target：`cost - func_value + next_Qbar`，固定使用平滑
+  target critic；论文中 online bootstrap 写法按笔误处理。
 - `critic_value()` 使用平滑 critic 估计 actor 梯度。
 - CSSCA objective / feasible update。
 - actor 参数 flatten / restore。
@@ -350,7 +345,7 @@ bar_phi     = (1 - gamma_t) * bar_phi     + gamma_t * phi
 
 ## 风险与开放问题
 
-1. `source_compatible` 与 `tex_strict` 两种 TD target 口径不同。v1 默认贴近现有源码；v2 若用于论文理论实验，应优先使用 `tex_strict`，并在结果中注明。
+1. `critic_target_mode` 只保留 `source_compatible`。论文中 online bootstrap 写法按笔误处理，不再作为实验分支。
 2. 共享 actor 与 per-cell actor 的理论口径不同。v1 默认共享参数用于同构场景；若论文表述需要完全分块的 `theta_i`，实现计划中应改为 per-cell actor。
 3. 跨小区干扰链路的局部归属会影响 tree critic 是否严格对应 `s=(s_1,...,s_N)`。v2 实现前必须锁定接收小区归属、发送小区归属或邻区摘要中的一种。
 4. 多小区干扰模型可能导致队列快速饱和。v1 需要保守设置 `arrival_upper`、`POWER_MAX`、`constraint_limit` 和跨小区 path gain。

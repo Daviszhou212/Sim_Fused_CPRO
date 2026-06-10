@@ -20,7 +20,7 @@
 - Create `MultiCell_MIMO/buffer.py`: fixed rolling transition buffer.
 - Create `MultiCell_MIMO/environment.py`: multi-cell MIMO queueing environment.
 - Create `MultiCell_MIMO/model.py`: squashed shared local actor and flatten/restore helpers.
-- Create `MultiCell_MIMO/critic.py`: dynamic multi-head average-cost critic with source-compatible and tex-strict TD target modes.
+- Create `MultiCell_MIMO/critic.py`: dynamic multi-head average-cost critic with the source-compatible TD target mode.
 - Create `MultiCell_MIMO/cssca.py`: Lagrangian-dual CSSCA objective/feasible update with CVXPY fallback and fail-fast validation.
 - Create `MultiCell_MIMO/sldac.py`: independent SLDAC main loop.
 - Create `MultiCell_MIMO/run_multicell_sldac.py`: isolated top-config entrypoint.
@@ -45,7 +45,7 @@ Create tests that assert:
 - checkpoint saving is disabled when `save_final_checkpoint=0`.
 - environment reset/step shapes and per-user costs are finite.
 - model action support and joint log-prob are valid.
-- critic supports dynamic heads and both TD target modes.
+- critic supports dynamic heads and rejects unsupported TD target modes.
 - CSSCA Lagrangian-dual returns finite objective/feasible updates and fails fast on invalid solver output.
 - SLDAC smoke runs in memory with temp roots and no formal entrypoint call.
 
@@ -115,7 +115,7 @@ Expected: PASS.
 
 - [ ] **Step 1: Implement critic**
 
-Implement dynamic `1 + constraint_dim` heads, online/target critic pairs, `source_compatible` and `tex_strict` TD target modes, gamma smoothing, and `critic_value()`.
+Implement dynamic `1 + constraint_dim` heads, online/target critic pairs, the `source_compatible` TD target mode, gamma smoothing, and `critic_value()`.
 
 - [ ] **Step 2: Implement Lagrangian-dual CSSCA**
 

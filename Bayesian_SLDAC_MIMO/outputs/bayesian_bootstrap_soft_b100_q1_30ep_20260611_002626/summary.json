@@ -1,0 +1,42 @@
+{
+  "run_tag": "b100_q1",
+  "episode": 30,
+  "variants": [
+    {
+      "name": "lr001_shared_boot099_beta0",
+      "status": "ok",
+      "params": {
+        "ensemble_size": 5,
+        "ensemble_init_mode": "shared",
+        "bootstrap_mask_prob": 0.99,
+        "beta_uncertainty": 0.0,
+        "critic_lr_base": 0.01
+      },
+      "objective_final": 2.2443323664990413,
+      "objective_tail10_mean": 2.260591543172573,
+      "average_cost_violation_final": 1.8348576519525677,
+      "average_cost_violation_tail10_mean": 1.8492610569668915,
+      "worst_residual_final": 2.0134625393070333,
+      "worst_residual_tail10_mean": 2.1105588749725674,
+      "q_sat_tail10_mean": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "q_used_std_tail10_mean": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cssca_status_counts": {
+        "fallback_nonfinite_input": 267,
+        "feasible_update": 2,
+        "objective_dual_success": 30
+      }
+    }
+  ]
+}

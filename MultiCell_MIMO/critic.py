@@ -89,8 +89,6 @@ class LegacyMultiHeadDifferentialCritic:
     def _next_value(self, next_state, next_action, critic_target_mode):
         if critic_target_mode == "source_compatible":
             return self.target_value(next_state, next_action)
-        if critic_target_mode == "tex_strict":
-            return self.online_value(next_state, next_action)
         raise ValueError("unsupported critic_target_mode: {0}".format(critic_target_mode))
 
     def _soft_update_head(self, target, source, gamma):
@@ -182,8 +180,6 @@ class MultiHeadDifferentialCritic:
         with torch.no_grad():
             if critic_target_mode == "source_compatible":
                 next_value = self.target_value(next_state, next_action)
-            elif critic_target_mode == "tex_strict":
-                next_value = self.online_value(next_state, next_action)
             else:
                 raise ValueError("unsupported critic_target_mode: {0}".format(critic_target_mode))
             return costs - func_value + next_value

@@ -1,0 +1,28 @@
+{
+  "run_tag": "b100_q1",
+  "episode": 30,
+  "variants": [
+    {
+      "name": "shared_boot1_beta0_tau5",
+      "params": {
+        "ensemble_size": 5,
+        "ensemble_init_mode": "shared",
+        "bootstrap_mask_prob": 1.0,
+        "beta_uncertainty": 0.0,
+        "tau_reward": 5.0,
+        "tau_cost": 5.0
+      },
+      "objective_final": 5.451857554735978,
+      "objective_tail10_mean": 5.450040665328072,
+      "average_cost_violation_final": 0.3594357757103819,
+      "average_cost_violation_tail10_mean": 0.38514767195682903,
+      "worst_residual_final": 1.7502669032025766,
+      "worst_residual_tail10_mean": 1.9295255930882242,
+      "q_std_objective_tail10_mean": 0.0,
+      "cssca_step_norm_tail10_mean": 1.3956619506168122e-12,
+      "cssca_status_counts": {
+        "feasible_update": 299
+      }
+    }
+  ]
+}

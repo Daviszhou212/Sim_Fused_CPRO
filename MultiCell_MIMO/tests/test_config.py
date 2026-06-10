@@ -27,6 +27,11 @@ class ConfigTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_config(config)
 
+        config = build_default_config()
+        config["critic_target_mode"] = "tex_strict"
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
     def test_cli_merge_keeps_protected_python_defaults(self):
         from MultiCell_MIMO.config import build_default_config, merge_cli_config
 
