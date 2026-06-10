@@ -45,7 +45,7 @@ class CheckpointTest(unittest.TestCase):
         self.assertEqual(payload["config"]["critic_backend"], "centralized")
         self.assertEqual(payload["config"]["critic_target_mode"], "source_compatible")
         self.assertEqual(payload["config"]["actor_parameterization"], "shared")
-        self.assertEqual(payload["config"]["log_std_mode"], "shared_cell")
+        self.assertEqual(payload["config"]["log_std_mode"], "joint")
         self.assertIn("state_dict", payload)
 
     def test_checkpoint_refuses_duplicate_filename_by_default(self):

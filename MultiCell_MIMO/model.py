@@ -42,7 +42,7 @@ class SharedLocalGaussianActor(nn.Module):
         self.power_max = float(power_max)
         self.device = torch.device(device)
         self.net = _build_mlp(self.local_state_dim, tuple(hidden_dims), self.cell_action_dim)
-        self.log_std = nn.Parameter(-0.5 * torch.ones(self.cell_action_dim, dtype=torch.float32))
+        self.log_std = -0.5 * torch.ones(self.action_dim, dtype=torch.float32, device=self.device)
         self.to(self.device)
 
     def _as_local_batch(self, local_states):
@@ -67,12 +67,16 @@ class SharedLocalGaussianActor(nn.Module):
         raw = self._local_raw_mean(flat_state)
         return raw.reshape(batch_size, self.cell_count, self.cell_action_dim)
 
+    def _log_std_cells(self):
+        return self.log_std.view(self.cell_count, self.cell_action_dim)
+
     def sample_action_tensor(self, local_states, use_mean=False, reparameterized=False):
+        self.log_std.requires_grad = False
         mean = self._raw_mean_batch(local_states)
         if use_mean:
             action = mean
         else:
-            std = torch.exp(self.log_std).view(1, 1, self.cell_action_dim)
+            std = torch.exp(self.log_std).view(1, self.cell_count, self.cell_action_dim)
             dist = torch.distributions.Normal(mean, std)
             action = dist.rsample() if reparameterized else dist.sample()
         return action.reshape(action.shape[0], self.action_dim)
@@ -83,21 +87,28 @@ class SharedLocalGaussianActor(nn.Module):
             action = self.sample_action_tensor(local_states, use_mean=use_mean)
         return action.reshape(-1).detach().cpu().numpy()
 
-    def sample_cell_action(self, local_state, use_mean=True):
+    def sample_cell_action(self, local_state, use_mean=True, cell_index=0):
+        self.log_std.requires_grad = False
         local_state = torch.as_tensor(local_state, dtype=torch.float32, device=self.device).view(1, -1)
         with torch.no_grad():
             mean = self._local_raw_mean(local_state)
-            action = mean if use_mean else torch.distributions.Normal(mean, torch.exp(self.log_std)).sample()
+            cell_index = int(cell_index)
+            if cell_index < 0 or cell_index >= self.cell_count:
+                raise ValueError("cell_index out of range")
+            std = torch.exp(self._log_std_cells()[cell_index]).view(1, self.cell_action_dim)
+            action = mean if use_mean else torch.distributions.Normal(mean, std).sample()
         return action.reshape(-1).detach().cpu().numpy()
 
     def evaluate_cells(self, local_states, action):
+        self.net.train()
+        self.log_std.requires_grad = True
         local_states = self._as_local_batch(local_states)
         action = torch.as_tensor(action, dtype=torch.float32, device=self.device)
         if action.dim() == 1:
             action = action.view(1, self.action_dim)
         action = action.view(local_states.shape[0], self.cell_count, self.cell_action_dim)
         mean = self._raw_mean_batch(local_states)
-        std = torch.exp(self.log_std).view(1, 1, self.cell_action_dim)
+        std = torch.exp(self.log_std).view(1, self.cell_count, self.cell_action_dim)
         dist = torch.distributions.Normal(mean, std)
         return dist.log_prob(action).sum(dim=-1)
 
@@ -131,7 +142,7 @@ class SharedLocalGaussianActor(nn.Module):
                 param.copy_(flat[offset : offset + count].view_as(param))
                 offset += count
             count = self.log_std.numel()
-            self.log_std.copy_(flat[offset : offset + count].view_as(self.log_std))
+            self.log_std = flat[offset : offset + count].detach().clone().view_as(self.log_std)
             offset += count
         if offset != flat.numel():
             raise ValueError("unused actor parameter entries: {0}".format(flat.numel() - offset))

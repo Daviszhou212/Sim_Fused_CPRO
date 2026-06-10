@@ -40,7 +40,7 @@ def build_default_config():
         "critic_target_mode": "source_compatible",
         "critic_backend": "centralized",
         "actor_parameterization": "shared",
-        "log_std_mode": "shared_cell",
+        "log_std_mode": "joint",
         "cssca_solver": "lagrangian_dual",
         "hidden_dims": (128, 128),
         "critic_hidden_dims": (64, 64),
