@@ -41,6 +41,8 @@ def build_default_config():
         "critic_backend": "centralized",
         "actor_parameterization": "shared",
         "log_std_mode": "joint",
+        "log_std_min": -5.0,
+        "log_std_max": 2.0,
         "cssca_solver": "lagrangian_dual",
         "hidden_dims": (128, 128),
         "critic_hidden_dims": (64, 64),
@@ -100,6 +102,8 @@ def validate_config(config):
     for key in ("constraint_limit", "arrival_upper", "queue_max", "power_max"):
         if float(config[key]) <= 0.0:
             raise ValueError("{0} must be positive".format(key))
+    if float(config["log_std_min"]) >= float(config["log_std_max"]):
+        raise ValueError("log_std_min must be smaller than log_std_max")
     if int(config["tree_message_dim"]) <= 0:
         raise ValueError("tree_message_dim must be positive")
     if int(config["num_new_data"]) % int(config["q_update_time"]) != 0:

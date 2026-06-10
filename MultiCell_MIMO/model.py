@@ -4,6 +4,8 @@ import torch.nn as nn
 
 
 ACTION_EPS = 1e-6
+DEFAULT_LOG_STD_MIN = -5.0
+DEFAULT_LOG_STD_MAX = 2.0
 
 
 def _build_mlp(input_dim, hidden_dims, output_dim):
@@ -32,6 +34,8 @@ class SharedLocalGaussianActor(nn.Module):
         hidden_dims=(128, 128),
         device="cpu",
         power_max=2.5,
+        log_std_min=DEFAULT_LOG_STD_MIN,
+        log_std_max=DEFAULT_LOG_STD_MAX,
     ):
         super().__init__()
         self.local_state_dim = int(local_state_dim)
@@ -40,6 +44,10 @@ class SharedLocalGaussianActor(nn.Module):
         self.cell_action_dim = self.users_per_cell + 1
         self.action_dim = self.cell_count * self.cell_action_dim
         self.power_max = float(power_max)
+        self.log_std_min = float(log_std_min)
+        self.log_std_max = float(log_std_max)
+        if self.log_std_min >= self.log_std_max:
+            raise ValueError("log_std_min must be smaller than log_std_max")
         self.device = torch.device(device)
         self.net = _build_mlp(self.local_state_dim, tuple(hidden_dims), self.cell_action_dim)
         self.log_std = -0.5 * torch.ones(self.action_dim, dtype=torch.float32, device=self.device)
@@ -69,6 +77,9 @@ class SharedLocalGaussianActor(nn.Module):
 
     def _log_std_cells(self):
         return self.log_std.view(self.cell_count, self.cell_action_dim)
+
+    def _clamp_log_std(self, log_std):
+        return log_std.clamp(self.log_std_min, self.log_std_max)
 
     def sample_action_tensor(self, local_states, use_mean=False, reparameterized=False):
         self.log_std.requires_grad = False
@@ -142,7 +153,8 @@ class SharedLocalGaussianActor(nn.Module):
                 param.copy_(flat[offset : offset + count].view_as(param))
                 offset += count
             count = self.log_std.numel()
-            self.log_std = flat[offset : offset + count].detach().clone().view_as(self.log_std)
+            restored_log_std = flat[offset : offset + count].detach().clone().view_as(self.log_std)
+            self.log_std = self._clamp_log_std(restored_log_std)
             offset += count
         if offset != flat.numel():
             raise ValueError("unused actor parameter entries: {0}".format(flat.numel() - offset))

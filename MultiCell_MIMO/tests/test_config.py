@@ -12,6 +12,9 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config["critic_target_mode"], "source_compatible")
         self.assertEqual(config["actor_parameterization"], "shared")
         self.assertEqual(config["log_std_mode"], "joint")
+        self.assertEqual(config["log_std_min"], -5.0)
+        self.assertEqual(config["log_std_max"], 2.0)
+        self.assertLess(config["log_std_min"], config["log_std_max"])
         self.assertEqual(config["run_id"], "")
         self.assertEqual(config["allow_overwrite"], 0)
 

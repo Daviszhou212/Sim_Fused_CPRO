@@ -93,6 +93,8 @@ class ModelTest(unittest.TestCase):
             hidden_dims=(8,),
             device="cpu",
         )
+        self.assertEqual(actor.log_std_min, -5.0)
+        self.assertEqual(actor.log_std_max, 2.0)
 
         parameter_ids = {id(param) for param in actor.parameters()}
         self.assertNotIn(id(actor.log_std), parameter_ids)
@@ -111,6 +113,27 @@ class ModelTest(unittest.TestCase):
 
         actor.sample_action(local_states[0], use_mean=False)
         self.assertFalse(actor.log_std.requires_grad)
+
+    def test_restore_clamps_log_std_to_configured_numeric_bounds(self):
+        from MultiCell_MIMO.model import SharedLocalGaussianActor
+
+        actor = SharedLocalGaussianActor(
+            local_state_dim=4,
+            users_per_cell=1,
+            cell_count=2,
+            hidden_dims=(8,),
+            device="cpu",
+            log_std_min=-3.0,
+            log_std_max=1.0,
+        )
+        flat = actor.flatten_parameters().detach().clone()
+        flat[-actor.action_dim :] = torch.tensor([-100.0, -4.0, 2.0, 100.0], dtype=torch.float32)
+
+        actor.restore_parameters(flat)
+
+        self.assertGreaterEqual(float(actor.log_std.min()), -3.0)
+        self.assertLessEqual(float(actor.log_std.max()), 1.0)
+        self.assertTrue(torch.isfinite(torch.exp(actor.log_std)).all().item())
 
 
 if __name__ == "__main__":

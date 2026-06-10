@@ -163,6 +163,8 @@ def run_sldac(config):
         hidden_dims=tuple(config["hidden_dims"]),
         device=device,
         power_max=float(config["power_max"]),
+        log_std_min=float(config["log_std_min"]),
+        log_std_max=float(config["log_std_max"]),
     )
     critic = _build_critic(config, env, device)
 
