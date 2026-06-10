@@ -3,10 +3,10 @@ import torch
 from datetime import datetime
 
 from .artifact_paths import build_checkpoint_dir
-from .buffer import TransitionBuffer
+from .buffer import LegacySLDACBuffer
 from .checkpoint import save_checkpoint
 from .config import validate_config
-from .critic import MultiHeadDifferentialCritic
+from .critic import LegacyMultiHeadDifferentialCritic
 from .cssca import solve_cssca_update
 from .environment import MultiCellMIMOEnv
 from .model import SharedLocalGaussianActor
@@ -39,11 +39,11 @@ def _sample_next_actions(actor, env, next_state_batch):
 
 def _build_critic(config, env, device):
     if config["critic_backend"] == "centralized":
-        return MultiHeadDifferentialCritic(
+        return LegacyMultiHeadDifferentialCritic(
             state_dim=env.state_dim,
             action_dim=env.action_dim,
             constraint_dim=env.constraint_dim,
-            hidden_dims=tuple(config["critic_hidden_dims"]),
+            q_update_time=int(config["q_update_time"]),
             device=device,
         )
     if config["critic_backend"] == "tree":
@@ -80,7 +80,8 @@ def _update_critic(
     next_action_batch,
     func_value,
     eta,
-    gamma,
+    gamma_reward,
+    gamma_cost,
 ):
     action_torch = torch.as_tensor(action_batch, dtype=torch.float32, device=device)
     next_action_torch = torch.as_tensor(next_action_batch, dtype=torch.float32, device=device)
@@ -96,7 +97,8 @@ def _update_critic(
             next_action=next_action_torch,
             func_value=func_value_torch,
             eta=eta,
-            gamma=gamma,
+            gamma_reward=gamma_reward,
+            gamma_cost=gamma_cost,
             critic_target_mode=config["critic_target_mode"],
         )
     if config["critic_backend"] == "tree":
@@ -108,7 +110,7 @@ def _update_critic(
             next_action=next_action_torch,
             func_value=func_value_torch,
             eta=eta,
-            gamma=gamma,
+            gamma=gamma_reward,
             critic_target_mode=config["critic_target_mode"],
         )
     raise ValueError("unsupported critic_backend: {0}".format(config["critic_backend"]))
@@ -120,14 +122,19 @@ def _estimate_actor_gradients(actor, critic, env, state_batch, action_batch, con
     local_state = torch.as_tensor(env.batch_local_actor_observations(state_batch), dtype=torch.float32, device=device)
     critic_state = _critic_state_tensor(env, state_batch, critic_backend, device)
     q_hat = critic.critic_value(critic_state, action_torch, use_target=True)
-    q_hat = q_hat - q_hat.mean(dim=0, keepdim=True)
+    q_hat_np = q_hat.detach().cpu().numpy()
+    q_hat_np[:, 0] = (q_hat_np[:, 0] - np.mean(q_hat_np[:, 0])) / (np.std(q_hat_np[:, 0]) + 1e-6)
+    objective_scale = np.std(q_hat_np[:, 0]) + 1e-6
+    for q_idx in range(1, 1 + int(constraint_dim)):
+        q_hat_np[:, q_idx] = (q_hat_np[:, q_idx] - np.mean(q_hat_np[:, q_idx])) / objective_scale
+    q_hat = torch.as_tensor(q_hat_np, dtype=torch.float32, device=device)
 
     theta_dim = int(actor.flatten_parameters().numel())
     grad = torch.zeros((1 + int(constraint_dim), theta_dim), dtype=torch.float32, device=device)
     for head_idx in range(1 + int(constraint_dim)):
         actor.zero_grad(set_to_none=True)
-        # 共享 actor 的 joint log-prob 是 cell log-prob 之和；进入 CSSCA 前按 cell 平均。
-        log_prob = actor.evaluate_action(local_state, action_torch) / float(max(env.cell_count, 1))
+        # Match SLDAC_code: use the joint action log-prob directly.
+        log_prob = actor.evaluate_action(local_state, action_torch)
         loss = (q_hat[:, head_idx].detach() * log_prob).mean()
         loss.backward()
         grad[head_idx] = actor.flatten_grad()
@@ -162,15 +169,19 @@ def run_sldac(config):
     t_horizon = int(config["t_horizon"])
     grad_batch_size = int(config["grad_batch_size"])
     num_new_data = int(config["num_new_data"])
+    q_update_time = int(config["q_update_time"])
+    critic_update_interval = int(num_new_data // q_update_time)
     update_time_per_episode = int(config["update_time_per_episode"])
     episode_count = int(config["episode"])
     num_update_time = episode_count * update_time_per_episode
-    max_steps = 2 * t_horizon + num_update_time * num_new_data + 1
-    buffer = TransitionBuffer(
-        capacity=max(2 * t_horizon, int(config["window"])),
+    max_steps = 2 * t_horizon + num_update_time * num_new_data + q_update_time + 1
+    buffer = LegacySLDACBuffer(
+        t_horizon=t_horizon,
+        num_new_data=num_new_data,
         state_dim=env.state_dim,
         action_dim=env.action_dim,
         cost_dim=1 + env.constraint_dim,
+        window=int(config["window"]),
     )
 
     func_value = np.zeros((1 + env.constraint_dim,), dtype=np.float64)
@@ -178,6 +189,8 @@ def run_sldac(config):
     objective_history = []
     cost_history = []
     update_index = 0
+    q_update_index = 0
+    cssca_info = {}
 
     for step_idx in range(max_steps):
         state = observation
@@ -186,27 +199,44 @@ def run_sldac(config):
         observation, objective_cost, done, info = env.step(action)
         _ = done
         costs = _build_cost_vector(objective_cost, info, env.constraint_dim, config["constraint_limit"])
-        buffer.store(state, action, costs, observation)
+        buffer.store_experiences(
+            state=state,
+            action=action,
+            costs=costs,
+            next_state=observation,
+            aver_objective=objective_cost,
+            aver_cost=float(info.get("cost", 0.0)) / float(max(env.constraint_dim, 1)),
+        )
 
-        if len(buffer) < 2 * t_horizon:
+        if step_idx <= 2 * t_horizon:
             continue
-        if (step_idx - 2 * t_horizon) % num_new_data != 0:
+        if (step_idx - 2 * t_horizon) % critic_update_interval != 0:
             continue
 
+        q_update_index += 1
         alpha = 1.0 / float((update_index + 1) ** float(config["alpha_pow"]))
         beta = 1.0 / float((update_index + 1) ** float(config["beta_pow"]))
         eta = 1.0 / float((update_index + 1) ** float(config["eta_pow"]))
-        gamma = 1.0 / float((update_index + 1) ** float(config["gamma_pow_reward"]))
+        if q_update_index == q_update_time:
+            gamma_reward = 1.0 / float((update_index + 1) ** float(config["gamma_pow_reward"]))
+            gamma_cost = 1.0 / float((update_index + 1) ** float(config["gamma_pow_cost"]))
+        else:
+            gamma_reward = 0.0
+            gamma_cost = 0.0
 
-        states_all, _actions_all, costs_all, _next_all = buffer.arrays()
+        states_all, actions_all, costs_all, next_states_all, aver_objective, aver_cost = buffer.take_experiences()
         func_value_tilda = costs_all.mean(axis=0)
         func_value = (1.0 - alpha) * func_value + alpha * func_value_tilda
 
-        if update_index % update_time_per_episode == 0:
-            objective_history.append(float(np.mean(costs_all[:, 0])))
-            cost_history.append(float(np.mean(costs_all[:, 1:] + float(config["constraint_limit"]))))
+        if update_index % update_time_per_episode == 0 and q_update_index == 1:
+            objective_history.append(float(np.mean(aver_objective)))
+            cost_history.append(float(np.mean(aver_cost)))
 
-        state_batch, action_batch, costs_batch, next_state_batch = buffer.latest(grad_batch_size)
+        batch_start = max(0, 2 * t_horizon - grad_batch_size)
+        state_batch = states_all[batch_start : 2 * t_horizon]
+        action_batch = actions_all[batch_start : 2 * t_horizon]
+        costs_batch = costs_all[batch_start : 2 * t_horizon]
+        next_state_batch = next_states_all[batch_start : 2 * t_horizon]
         next_action_batch = _sample_next_actions(actor, env, next_state_batch)
         _update_critic(
             critic=critic,
@@ -220,8 +250,13 @@ def run_sldac(config):
             next_action_batch=next_action_batch,
             func_value=func_value,
             eta=eta,
-            gamma=gamma,
+            gamma_reward=gamma_reward,
+            gamma_cost=gamma_cost,
         )
+
+        if q_update_index != q_update_time:
+            continue
+        q_update_index = 0
 
         grad_tilda = _estimate_actor_gradients(
             actor,

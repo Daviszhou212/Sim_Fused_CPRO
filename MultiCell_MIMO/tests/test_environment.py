@@ -39,6 +39,23 @@ class EnvironmentTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             env.step(np.ones(env.action_dim + 1, dtype=np.float64))
 
+    def test_legacy_seed_step_stream_resets_and_advances(self):
+        from MultiCell_MIMO.environment import MultiCellMIMOEnv
+
+        env = MultiCellMIMOEnv(seed=11, nt=2, cell_count=2, users_per_cell=1)
+        env.reset()
+        self.assertEqual(env.seed_step, 11)
+
+        action = np.full(env.action_dim, 0.5, dtype=np.float64)
+        env.step(action)
+        self.assertEqual(env.seed_step, 12)
+
+        state_after_reset = env.reset().copy()
+        self.assertEqual(env.seed_step, 11)
+
+        env2 = MultiCellMIMOEnv(seed=11, nt=2, cell_count=2, users_per_cell=1)
+        np.testing.assert_allclose(state_after_reset, env2.reset())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -42,7 +42,7 @@ def build_default_config():
         "actor_parameterization": "shared",
         "log_std_mode": "shared_cell",
         "cssca_solver": "lagrangian_dual",
-        "hidden_dims": (64, 64),
+        "hidden_dims": (128, 128),
         "critic_hidden_dims": (64, 64),
         "tree_message_dim": 32,
         # 输出隔离：正式入口只能写入 MultiCell_MIMO 内部路径。
@@ -69,6 +69,7 @@ def _as_tuple(value):
 def validate_config(config):
     config.setdefault("critic_backend", "centralized")
     config.setdefault("tree_message_dim", 32)
+    config.setdefault("q_update_time", 1)
     config.setdefault("run_id", "")
     config.setdefault("allow_overwrite", 0)
     if config["critic_backend"] not in CRITIC_BACKENDS:
@@ -82,7 +83,18 @@ def validate_config(config):
     if config["cssca_solver"] not in CSSCA_SOLVERS:
         raise ValueError("unsupported cssca_solver: {0}".format(config["cssca_solver"]))
 
-    for key in ("nt", "cell_count", "users_per_cell", "episode", "t_horizon", "grad_batch_size", "num_new_data"):
+    for key in (
+        "nt",
+        "cell_count",
+        "users_per_cell",
+        "episode",
+        "update_time_per_episode",
+        "t_horizon",
+        "grad_batch_size",
+        "num_new_data",
+        "q_update_time",
+        "window",
+    ):
         if int(config[key]) <= 0:
             raise ValueError("{0} must be positive".format(key))
     for key in ("constraint_limit", "arrival_upper", "queue_max", "power_max"):
@@ -90,6 +102,10 @@ def validate_config(config):
             raise ValueError("{0} must be positive".format(key))
     if int(config["tree_message_dim"]) <= 0:
         raise ValueError("tree_message_dim must be positive")
+    if int(config["num_new_data"]) % int(config["q_update_time"]) != 0:
+        raise ValueError("num_new_data must be divisible by q_update_time")
+    if int(config["window"]) < int(config["num_new_data"]):
+        raise ValueError("window must be at least num_new_data")
 
     config["hidden_dims"] = _as_tuple(config["hidden_dims"])
     config["critic_hidden_dims"] = _as_tuple(config["critic_hidden_dims"])

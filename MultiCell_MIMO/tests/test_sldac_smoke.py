@@ -25,7 +25,7 @@ class SldacSmokeTest(unittest.TestCase):
                     "t_horizon": 3,
                     "grad_batch_size": 3,
                     "num_new_data": 2,
-                    "q_update_time": 1,
+                    "q_update_time": 2,
                     "window": 20,
                     "hidden_dims": (8,),
                     "critic_hidden_dims": (8,),

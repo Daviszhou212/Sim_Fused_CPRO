@@ -1,11 +1,9 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 ACTION_EPS = 1e-6
-ACTION_INVERSE_EPS = 1e-6
 
 
 def _build_mlp(input_dim, hidden_dims, output_dim):
@@ -19,7 +17,7 @@ def _build_mlp(input_dim, hidden_dims, output_dim):
         layers.append(nn.Tanh())
         prev_dim = int(hidden_dim)
     output = nn.Linear(prev_dim, int(output_dim))
-    nn.init.orthogonal_(output.weight, gain=0.01)
+    nn.init.orthogonal_(output.weight, gain=np.sqrt(2.0))
     nn.init.constant_(output.bias, 0.0)
     layers.append(output)
     return nn.Sequential(*layers)
@@ -31,7 +29,7 @@ class SharedLocalGaussianActor(nn.Module):
         local_state_dim,
         users_per_cell,
         cell_count,
-        hidden_dims=(64, 64),
+        hidden_dims=(128, 128),
         device="cpu",
         power_max=2.5,
     ):
@@ -59,37 +57,8 @@ class SharedLocalGaussianActor(nn.Module):
             raise ValueError("local_states shape mismatch")
         return tensor
 
-    def _transform_raw(self, raw_action):
-        power_raw = raw_action[..., : self.users_per_cell]
-        reg_raw = raw_action[..., self.users_per_cell :]
-        power = ACTION_EPS + (self.power_max - ACTION_EPS) * torch.sigmoid(power_raw)
-        reg = F.softplus(reg_raw) + ACTION_EPS
-        return torch.cat((power, reg), dim=-1)
-
-    def _inverse_transform(self, action):
-        power = action[..., : self.users_per_cell].clamp(
-            ACTION_EPS + ACTION_INVERSE_EPS,
-            self.power_max - ACTION_INVERSE_EPS,
-        )
-        reg = action[..., self.users_per_cell :].clamp_min(ACTION_EPS + ACTION_INVERSE_EPS)
-        z = (power - ACTION_EPS) / (self.power_max - ACTION_EPS)
-        power_raw = torch.logit(z)
-        reg_raw = torch.log(torch.expm1(reg - ACTION_EPS))
-        return torch.cat((power_raw, reg_raw), dim=-1)
-
-    def _log_abs_det_jacobian(self, raw_action):
-        power_raw = raw_action[..., : self.users_per_cell]
-        reg_raw = raw_action[..., self.users_per_cell :]
-        power_log_det = (
-            np.log(self.power_max - ACTION_EPS)
-            + F.logsigmoid(power_raw)
-            + F.logsigmoid(-power_raw)
-        )
-        reg_log_det = F.logsigmoid(reg_raw)
-        return torch.cat((power_log_det, reg_log_det), dim=-1).sum(dim=-1)
-
     def _local_raw_mean(self, local_states_2d):
-        return self.net(local_states_2d)
+        return self.power_max * torch.sigmoid(self.net(local_states_2d))
 
     def _raw_mean_batch(self, local_states):
         local_states = self._as_local_batch(local_states)
@@ -99,15 +68,14 @@ class SharedLocalGaussianActor(nn.Module):
         return raw.reshape(batch_size, self.cell_count, self.cell_action_dim)
 
     def sample_action_tensor(self, local_states, use_mean=False, reparameterized=False):
-        raw_mean = self._raw_mean_batch(local_states)
+        mean = self._raw_mean_batch(local_states)
         if use_mean:
-            raw_action = raw_mean
+            action = mean
         else:
             std = torch.exp(self.log_std).view(1, 1, self.cell_action_dim)
-            dist = torch.distributions.Normal(raw_mean, std)
-            raw_action = dist.rsample() if reparameterized else dist.sample()
-        action = self._transform_raw(raw_action)
-        return action.reshape(raw_action.shape[0], self.action_dim)
+            dist = torch.distributions.Normal(mean, std)
+            action = dist.rsample() if reparameterized else dist.sample()
+        return action.reshape(action.shape[0], self.action_dim)
 
     def sample_action(self, local_states, use_mean=False):
         self.eval()
@@ -118,9 +86,8 @@ class SharedLocalGaussianActor(nn.Module):
     def sample_cell_action(self, local_state, use_mean=True):
         local_state = torch.as_tensor(local_state, dtype=torch.float32, device=self.device).view(1, -1)
         with torch.no_grad():
-            raw_mean = self._local_raw_mean(local_state)
-            raw_action = raw_mean if use_mean else torch.distributions.Normal(raw_mean, torch.exp(self.log_std)).sample()
-            action = self._transform_raw(raw_action)
+            mean = self._local_raw_mean(local_state)
+            action = mean if use_mean else torch.distributions.Normal(mean, torch.exp(self.log_std)).sample()
         return action.reshape(-1).detach().cpu().numpy()
 
     def evaluate_cells(self, local_states, action):
@@ -129,12 +96,10 @@ class SharedLocalGaussianActor(nn.Module):
         if action.dim() == 1:
             action = action.view(1, self.action_dim)
         action = action.view(local_states.shape[0], self.cell_count, self.cell_action_dim)
-        raw_mean = self._raw_mean_batch(local_states)
-        raw_action = self._inverse_transform(action)
+        mean = self._raw_mean_batch(local_states)
         std = torch.exp(self.log_std).view(1, 1, self.cell_action_dim)
-        dist = torch.distributions.Normal(raw_mean, std)
-        raw_log_prob = dist.log_prob(raw_action).sum(dim=-1)
-        return raw_log_prob - self._log_abs_det_jacobian(raw_action)
+        dist = torch.distributions.Normal(mean, std)
+        return dist.log_prob(action).sum(dim=-1)
 
     def evaluate_action(self, local_states, action):
         return self.evaluate_cells(local_states, action).sum(dim=1)

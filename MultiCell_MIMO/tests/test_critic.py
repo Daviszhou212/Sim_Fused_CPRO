@@ -67,6 +67,40 @@ class CriticTest(unittest.TestCase):
         self.assertEqual(len(losses), 2)
         self.assertTrue(all(value >= 0.0 for value in losses))
 
+    def test_legacy_critic_matches_sldac_code_optimizer_and_bounds(self):
+        from MultiCell_MIMO.critic import LegacyMultiHeadDifferentialCritic
+
+        critic = LegacyMultiHeadDifferentialCritic(
+            state_dim=4,
+            action_dim=2,
+            constraint_dim=1,
+            q_update_time=4,
+            device="cpu",
+        )
+        self.assertAlmostEqual(critic.optimizers[0].param_groups[0]["lr"], 0.05)
+
+        value = critic.critic_value(torch.randn(5, 4), torch.randn(5, 2), use_target=True)
+        self.assertEqual(value.shape, (5, 2))
+        self.assertLessEqual(float(value.max()), 10.0)
+        self.assertGreaterEqual(float(value.min()), -10.0)
+
+        losses = critic.update(
+            state=torch.randn(5, 4),
+            action=torch.randn(5, 2),
+            costs=torch.randn(5, 2),
+            next_state=torch.randn(5, 4),
+            next_action=torch.randn(5, 2),
+            func_value=torch.zeros(2),
+            eta=0.7,
+            gamma_reward=0.3,
+            gamma_cost=0.2,
+            critic_target_mode="source_compatible",
+        )
+
+        self.assertEqual(len(losses), 2)
+        self.assertAlmostEqual(critic.optimizers[0].param_groups[0]["lr"], 0.05)
+        self.assertTrue(all(value >= 0.0 for value in losses))
+
 
 if __name__ == "__main__":
     unittest.main()

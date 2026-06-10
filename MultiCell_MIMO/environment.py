@@ -39,18 +39,15 @@ class MultiCellMIMOEnv:
         self.queue_max = float(queue_max)
         self.noise_power = 1e-6
         self.path_count = int(path_count)
-        self.rng = self._make_rng(self.seed)
-        init_rng = self._make_rng(self.seed)
+        self.seed_step = self.seed
+        np.random.seed(self.seed)
 
-        self.path_gain = self._build_path_gain(init_rng, direct_gain_db_range, cross_gain_db_range)
-        self.alpha_power = self._build_alpha_power(init_rng)
-        self.array_response = self._build_array_response(init_rng)
+        self.path_gain = self._build_path_gain(np.random, direct_gain_db_range, cross_gain_db_range)
+        self.alpha_power = self._build_alpha_power(np.random)
+        self.array_response = self._build_array_response(np.random)
         self.h = np.zeros((self.cell_count, self.users_per_cell, self.cell_count, self.nt), dtype=np.complex128)
         self.queue = np.zeros((self.cell_count, self.users_per_cell), dtype=np.float64)
         self.state = np.zeros((self.state_dim,), dtype=np.float64)
-
-    def _make_rng(self, seed):
-        return np.random.RandomState(int(seed))
 
     def _build_path_gain(self, rng, direct_range, cross_range):
         path_gain_db = np.zeros((self.cell_count, self.users_per_cell, self.cell_count), dtype=np.float64)
@@ -96,8 +93,8 @@ class MultiCellMIMOEnv:
                 for tx_cell in range(self.cell_count):
                     alpha_power = self.alpha_power[rx_cell, user, tx_cell]
                     alpha = (
-                        np.sqrt(alpha_power / 2.0) * self.rng.randn(self.path_count)
-                        + 1j * np.sqrt(alpha_power / 2.0) * self.rng.randn(self.path_count)
+                        np.sqrt(alpha_power / 2.0) * np.random.randn(self.path_count)
+                        + 1j * np.sqrt(alpha_power / 2.0) * np.random.randn(self.path_count)
                     )
                     self.h[rx_cell, user, tx_cell] = self.array_response[rx_cell, user, tx_cell] @ alpha
 
@@ -106,7 +103,8 @@ class MultiCellMIMOEnv:
         return self.state.astype(np.float64, copy=False)
 
     def reset(self):
-        self.rng = self._make_rng(self.seed)
+        np.random.seed(self.seed)
+        self.seed_step = self.seed
         self.queue = np.zeros((self.cell_count, self.users_per_cell), dtype=np.float64)
         self._refresh_channels()
         return self._compose_state()
@@ -155,6 +153,8 @@ class MultiCellMIMOEnv:
         return rates
 
     def step(self, action):
+        np.random.seed(self.seed_step)
+        self.seed_step += 1
         power, reg = self._decode_action(action)
         objective_cost = float(np.sum(power))
         current_costs = self.queue.reshape(-1).copy()
@@ -163,7 +163,7 @@ class MultiCellMIMOEnv:
         info["cell_cost"] = np.sum(self.queue, axis=1).astype(np.float64, copy=False)
 
         rates = self._compute_rates(power, reg)
-        arrivals = self.rng.uniform(0.0, self.arrival_upper, size=(self.cell_count, self.users_per_cell))
+        arrivals = np.random.uniform(0.0, self.arrival_upper, size=(self.cell_count, self.users_per_cell))
         self.queue = np.clip(self.queue + arrivals - rates, 0.0, self.queue_max)
         self._refresh_channels()
         return self._compose_state(), objective_cost, False, info

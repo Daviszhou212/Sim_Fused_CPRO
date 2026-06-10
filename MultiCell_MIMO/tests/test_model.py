@@ -45,6 +45,29 @@ class ModelTest(unittest.TestCase):
         self.assertTrue(torch.isfinite(joint_log_prob).all().item())
         self.assertTrue(torch.allclose(joint_log_prob, cell_log_probs.sum(dim=1), atol=1e-5))
 
+    def test_log_prob_uses_direct_bounded_action_gaussian(self):
+        from MultiCell_MIMO.model import SharedLocalGaussianActor
+
+        actor = SharedLocalGaussianActor(
+            local_state_dim=5,
+            users_per_cell=1,
+            cell_count=2,
+            hidden_dims=(8,),
+            device="cpu",
+        )
+        local_states = torch.zeros((3, 2, 5), dtype=torch.float32)
+        action = torch.full((3, 4), 0.75, dtype=torch.float32)
+
+        mean = actor._raw_mean_batch(local_states)
+        std = torch.exp(actor.log_std).view(1, 1, actor.cell_action_dim)
+        expected = torch.distributions.Normal(mean, std).log_prob(
+            action.view(3, 2, actor.cell_action_dim)
+        ).sum(dim=(1, 2))
+
+        actual = actor.evaluate_action(local_states, action)
+
+        self.assertTrue(torch.allclose(actual, expected, atol=1e-5))
+
     def test_flatten_restore_round_trip(self):
         from MultiCell_MIMO.model import SharedLocalGaussianActor
 
