@@ -210,6 +210,9 @@ class MultiCellMIMOEnv:
     def batch_local_actor_observations(self, states):
         return np.stack([self.local_actor_observations_from_state(state) for state in np.asarray(states)], axis=0)
 
+    def batch_local_critic_observations(self, states):
+        return np.stack([self.local_critic_observations_from_state(state) for state in np.asarray(states)], axis=0)
+
     def local_actor_observations(self):
         return self.local_actor_observations_from_state(self.state)
 

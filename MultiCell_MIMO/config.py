@@ -1,6 +1,7 @@
 import copy
 
 
+CRITIC_BACKENDS = ("centralized", "tree")
 CRITIC_TARGET_MODES = ("source_compatible", "tex_strict")
 ACTOR_PARAMETERIZATIONS = ("shared", "per_cell")
 LOG_STD_MODES = ("shared_cell", "joint")
@@ -37,17 +38,21 @@ def build_default_config():
         "tau_constraint": 1.0,
         # 模式开关：显式区分源码兼容 TD target 与 tex strict target。
         "critic_target_mode": "source_compatible",
+        "critic_backend": "centralized",
         "actor_parameterization": "shared",
         "log_std_mode": "shared_cell",
         "cssca_solver": "lagrangian_dual",
         "hidden_dims": (64, 64),
         "critic_hidden_dims": (64, 64),
+        "tree_message_dim": 32,
         # 输出隔离：正式入口只能写入 MultiCell_MIMO 内部路径。
         "output_root": "MultiCell_MIMO/outputs",
         "checkpoint_root": "MultiCell_MIMO/checkpoints",
         "save_final_checkpoint": 1,
         "checkpoint_interval_episodes": 10,
         "run_tag": "multicell_sldac",
+        "run_id": "",
+        "allow_overwrite": 0,
     }
 
 
@@ -62,6 +67,12 @@ def _as_tuple(value):
 
 
 def validate_config(config):
+    config.setdefault("critic_backend", "centralized")
+    config.setdefault("tree_message_dim", 32)
+    config.setdefault("run_id", "")
+    config.setdefault("allow_overwrite", 0)
+    if config["critic_backend"] not in CRITIC_BACKENDS:
+        raise ValueError("unsupported critic_backend: {0}".format(config["critic_backend"]))
     if config["critic_target_mode"] not in CRITIC_TARGET_MODES:
         raise ValueError("unsupported critic_target_mode: {0}".format(config["critic_target_mode"]))
     if config["actor_parameterization"] not in ACTOR_PARAMETERIZATIONS:
@@ -77,6 +88,8 @@ def validate_config(config):
     for key in ("constraint_limit", "arrival_upper", "queue_max", "power_max"):
         if float(config[key]) <= 0.0:
             raise ValueError("{0} must be positive".format(key))
+    if int(config["tree_message_dim"]) <= 0:
+        raise ValueError("tree_message_dim must be positive")
 
     config["hidden_dims"] = _as_tuple(config["hidden_dims"])
     config["critic_hidden_dims"] = _as_tuple(config["critic_hidden_dims"])

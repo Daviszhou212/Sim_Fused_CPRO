@@ -26,6 +26,10 @@ class EnvironmentTest(unittest.TestCase):
         self.assertIn("cost_6", info)
         self.assertEqual(env.local_actor_observations().shape, (env.cell_count, env.local_actor_state_dim))
         self.assertEqual(env.local_critic_observations().shape, (env.cell_count, env.local_critic_state_dim))
+        self.assertEqual(
+            env.batch_local_critic_observations(np.stack((state, next_state), axis=0)).shape,
+            (2, env.cell_count, env.local_critic_state_dim),
+        )
 
     def test_invalid_action_dimension_raises(self):
         from MultiCell_MIMO.environment import MultiCellMIMOEnv

@@ -92,6 +92,10 @@ class TreeMessageDifferentialCritic:
     def target_value(self, local_state, action):
         return self._values(self.target_encoder, self.target_heads, local_state, action)
 
+    def critic_value(self, local_state, action, use_target=True):
+        with torch.no_grad():
+            return self.target_value(local_state, action) if use_target else self.online_value(local_state, action)
+
     def compute_td_target(self, costs, next_local_state, next_action, func_value, critic_target_mode):
         costs = torch.as_tensor(costs, dtype=torch.float32, device=self.device)
         func_value = torch.as_tensor(func_value, dtype=torch.float32, device=self.device).reshape(1, -1)

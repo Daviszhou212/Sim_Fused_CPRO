@@ -22,6 +22,7 @@ class TreeCriticTest(unittest.TestCase):
         func_value = torch.zeros(3)
 
         online = critic.online_value(local_state, action)
+        target_value = critic.critic_value(local_state, action, use_target=True)
         source_target = critic.compute_td_target(
             costs,
             local_state,
@@ -38,6 +39,7 @@ class TreeCriticTest(unittest.TestCase):
         )
 
         self.assertEqual(online.shape, (4, 3))
+        self.assertEqual(target_value.shape, (4, 3))
         self.assertEqual(source_target.shape, (4, 3))
         self.assertEqual(strict_target.shape, (4, 3))
         self.assertTrue(torch.isfinite(online).all().item())

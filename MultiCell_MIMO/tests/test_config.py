@@ -8,14 +8,17 @@ class ConfigTest(unittest.TestCase):
         config = build_default_config()
         validate_config(config)
 
+        self.assertEqual(config["critic_backend"], "centralized")
         self.assertEqual(config["critic_target_mode"], "source_compatible")
         self.assertEqual(config["actor_parameterization"], "shared")
         self.assertEqual(config["log_std_mode"], "shared_cell")
+        self.assertEqual(config["run_id"], "")
+        self.assertEqual(config["allow_overwrite"], 0)
 
     def test_invalid_enum_values_raise(self):
         from MultiCell_MIMO.config import build_default_config, validate_config
 
-        for field_name in ("critic_target_mode", "actor_parameterization", "log_std_mode"):
+        for field_name in ("critic_backend", "critic_target_mode", "actor_parameterization", "log_std_mode"):
             config = build_default_config()
             config[field_name] = "invalid"
             with self.assertRaises(ValueError):

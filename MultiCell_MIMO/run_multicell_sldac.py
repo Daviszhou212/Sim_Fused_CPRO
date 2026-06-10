@@ -38,16 +38,19 @@ def main(args=None):
     output_path = build_output_path(
         config["output_root"],
         "SLDAC",
-        "SLDAC_multicell_{0}_seed{1}.mat".format(config["run_tag"], int(config["seed"])),
+        "SLDAC_multicell_{0}_{1}_seed{2}.mat".format(config["run_tag"], result["run_id"], int(config["seed"])),
+        allow_overwrite=bool(int(config.get("allow_overwrite", 0))),
     )
     savemat(
         output_path,
         {
             "objective": np.asarray(result["objective_history"], dtype=np.float64),
             "cost": np.asarray(result["cost_history"], dtype=np.float64),
+            "critic_backend": str(config["critic_backend"]),
             "critic_target_mode": str(config["critic_target_mode"]),
             "actor_parameterization": str(config["actor_parameterization"]),
             "log_std_mode": str(config["log_std_mode"]),
+            "run_id": str(result["run_id"]),
             "seed": int(config["seed"]),
         },
     )

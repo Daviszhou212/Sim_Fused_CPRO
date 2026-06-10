@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from datetime import datetime
 
 from .artifact_paths import build_checkpoint_dir
 from .buffer import TransitionBuffer
@@ -10,6 +11,14 @@ from .cssca import solve_cssca_update
 from .environment import MultiCellMIMOEnv
 from .model import SharedLocalGaussianActor
 from .seed_utils import resolve_torch_device, set_global_seed
+from .tree_critic import TreeMessageDifferentialCritic
+
+
+def _resolve_run_id(config):
+    configured = str(config.get("run_id", "")).strip()
+    if configured:
+        return configured
+    return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
 
 def _build_cost_vector(objective_cost, info, constraint_dim, constraint_limit):
@@ -28,12 +37,89 @@ def _sample_next_actions(actor, env, next_state_batch):
     return np.asarray(actions, dtype=np.float64)
 
 
-def _estimate_actor_gradients(actor, critic, env, state_batch, action_batch, constraint_dim):
+def _build_critic(config, env, device):
+    if config["critic_backend"] == "centralized":
+        return MultiHeadDifferentialCritic(
+            state_dim=env.state_dim,
+            action_dim=env.action_dim,
+            constraint_dim=env.constraint_dim,
+            hidden_dims=tuple(config["critic_hidden_dims"]),
+            device=device,
+        )
+    if config["critic_backend"] == "tree":
+        return TreeMessageDifferentialCritic(
+            local_state_dim=env.local_critic_state_dim,
+            cell_count=env.cell_count,
+            cell_action_dim=env.cell_action_dim,
+            constraint_dim=env.constraint_dim,
+            message_dim=int(config["tree_message_dim"]),
+            hidden_dims=tuple(config["critic_hidden_dims"]),
+            device=device,
+        )
+    raise ValueError("unsupported critic_backend: {0}".format(config["critic_backend"]))
+
+
+def _critic_state_tensor(env, state_batch, critic_backend, device):
+    if critic_backend == "centralized":
+        return torch.as_tensor(state_batch, dtype=torch.float32, device=device)
+    if critic_backend == "tree":
+        local_state = env.batch_local_critic_observations(state_batch)
+        return torch.as_tensor(local_state, dtype=torch.float32, device=device)
+    raise ValueError("unsupported critic_backend: {0}".format(critic_backend))
+
+
+def _update_critic(
+    critic,
+    env,
+    config,
+    device,
+    state_batch,
+    action_batch,
+    costs_batch,
+    next_state_batch,
+    next_action_batch,
+    func_value,
+    eta,
+    gamma,
+):
+    action_torch = torch.as_tensor(action_batch, dtype=torch.float32, device=device)
+    next_action_torch = torch.as_tensor(next_action_batch, dtype=torch.float32, device=device)
+    costs_torch = torch.as_tensor(costs_batch, dtype=torch.float32, device=device)
+    func_value_torch = torch.as_tensor(func_value, dtype=torch.float32, device=device)
+
+    if config["critic_backend"] == "centralized":
+        return critic.update(
+            state=_critic_state_tensor(env, state_batch, "centralized", device),
+            action=action_torch,
+            costs=costs_torch,
+            next_state=_critic_state_tensor(env, next_state_batch, "centralized", device),
+            next_action=next_action_torch,
+            func_value=func_value_torch,
+            eta=eta,
+            gamma=gamma,
+            critic_target_mode=config["critic_target_mode"],
+        )
+    if config["critic_backend"] == "tree":
+        return critic.update(
+            local_state=_critic_state_tensor(env, state_batch, "tree", device),
+            action=action_torch,
+            costs=costs_torch,
+            next_local_state=_critic_state_tensor(env, next_state_batch, "tree", device),
+            next_action=next_action_torch,
+            func_value=func_value_torch,
+            eta=eta,
+            gamma=gamma,
+            critic_target_mode=config["critic_target_mode"],
+        )
+    raise ValueError("unsupported critic_backend: {0}".format(config["critic_backend"]))
+
+
+def _estimate_actor_gradients(actor, critic, env, state_batch, action_batch, constraint_dim, critic_backend):
     device = actor.device
-    state_torch = torch.as_tensor(state_batch, dtype=torch.float32, device=device)
     action_torch = torch.as_tensor(action_batch, dtype=torch.float32, device=device)
     local_state = torch.as_tensor(env.batch_local_actor_observations(state_batch), dtype=torch.float32, device=device)
-    q_hat = critic.critic_value(state_torch, action_torch, use_target=True)
+    critic_state = _critic_state_tensor(env, state_batch, critic_backend, device)
+    q_hat = critic.critic_value(critic_state, action_torch, use_target=True)
     q_hat = q_hat - q_hat.mean(dim=0, keepdim=True)
 
     theta_dim = int(actor.flatten_parameters().numel())
@@ -50,6 +136,7 @@ def _estimate_actor_gradients(actor, critic, env, state_batch, action_batch, con
 
 def run_sldac(config):
     config = validate_config(dict(config))
+    config["run_id"] = _resolve_run_id(config)
     seed = set_global_seed(config["seed"])
     device = resolve_torch_device(config.get("device", "cpu"))
 
@@ -70,13 +157,7 @@ def run_sldac(config):
         device=device,
         power_max=float(config["power_max"]),
     )
-    critic = MultiHeadDifferentialCritic(
-        state_dim=env.state_dim,
-        action_dim=env.action_dim,
-        constraint_dim=env.constraint_dim,
-        hidden_dims=tuple(config["critic_hidden_dims"]),
-        device=device,
-    )
+    critic = _build_critic(config, env, device)
 
     t_horizon = int(config["t_horizon"])
     grad_batch_size = int(config["grad_batch_size"])
@@ -127,19 +208,30 @@ def run_sldac(config):
 
         state_batch, action_batch, costs_batch, next_state_batch = buffer.latest(grad_batch_size)
         next_action_batch = _sample_next_actions(actor, env, next_state_batch)
-        critic.update(
-            state=torch.as_tensor(state_batch, dtype=torch.float32, device=device),
-            action=torch.as_tensor(action_batch, dtype=torch.float32, device=device),
-            costs=torch.as_tensor(costs_batch, dtype=torch.float32, device=device),
-            next_state=torch.as_tensor(next_state_batch, dtype=torch.float32, device=device),
-            next_action=torch.as_tensor(next_action_batch, dtype=torch.float32, device=device),
-            func_value=torch.as_tensor(func_value, dtype=torch.float32, device=device),
+        _update_critic(
+            critic=critic,
+            env=env,
+            config=config,
+            device=device,
+            state_batch=state_batch,
+            action_batch=action_batch,
+            costs_batch=costs_batch,
+            next_state_batch=next_state_batch,
+            next_action_batch=next_action_batch,
+            func_value=func_value,
             eta=eta,
             gamma=gamma,
-            critic_target_mode=config["critic_target_mode"],
         )
 
-        grad_tilda = _estimate_actor_gradients(actor, critic, env, state_batch, action_batch, env.constraint_dim)
+        grad_tilda = _estimate_actor_gradients(
+            actor,
+            critic,
+            env,
+            state_batch,
+            action_batch,
+            env.constraint_dim,
+            config["critic_backend"],
+        )
         grad_estimate = (1.0 - alpha) * grad_estimate + alpha * grad_tilda
 
         theta = actor.flatten_parameters().detach().cpu().numpy()
@@ -162,6 +254,7 @@ def run_sldac(config):
                     "SLDAC",
                     config.get("run_tag", "multicell_sldac"),
                     seed,
+                    config.get("run_id", ""),
                 )
                 state_dict = {}
                 state_dict.update({"actor." + key: value for key, value in actor.checkpoint_state().items()})
@@ -184,4 +277,6 @@ def run_sldac(config):
         "objective_history": np.asarray(objective_history, dtype=np.float64),
         "cost_history": np.asarray(cost_history, dtype=np.float64),
         "func_value": np.asarray(func_value, dtype=np.float64),
+        "critic_backend": str(config["critic_backend"]),
+        "run_id": str(config["run_id"]),
     }
