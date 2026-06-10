@@ -20,6 +20,12 @@ from model import (
 )
 from model import clqr_inverse_action_and_log_det, mimo_inverse_action_and_log_det
 from seed_utils import resolve_torch_device
+from cssca_dual_solver import (
+    CSSCA_SOLVER_DUAL,
+    can_use_dual_cssca,
+    normalize_cssca_solver,
+    solve_dual_cssca_update,
+)
 
 
 # 策略库配置：每个场景固定使用 1 个 DK 策略 + 2 个镜像 SLDAC 策略。
@@ -55,6 +61,7 @@ RHO_SCHEDULER_EPISODE_PEAK_EXP_DECAY = "episode_peak_exp_decay"
 RHO_BETA_PEAK_EPISODE = 15
 RHO_BETA_PEAK_VALUE = 0.5
 RHO_BETA_END_VALUE = 0.005
+_CSSCA_SIMPLEX_FALLBACK_WARNED = False
 
 
 def _format_seed_dir(seed):
@@ -850,12 +857,46 @@ def _solve_problem(prob):
     return prob.status
 
 
-def _policy_update(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost, simplex_dim=None, rho_lower_bounds=0.0):
-    if cp is None:
-        raise ModuleNotFoundError("cvxpy is required for Fused_CPRO.")
+def _warn_dual_simplex_fallback():
+    global _CSSCA_SIMPLEX_FALLBACK_WARNED
+    if not _CSSCA_SIMPLEX_FALLBACK_WARNED:
+        print("dual CSSCA does not support rho simplex constraints yet; fallback to cvx.")
+        _CSSCA_SIMPLEX_FALLBACK_WARNED = True
+
+
+def _policy_update(
+    func_value_np,
+    grad_np,
+    paras_t_np,
+    tau_reward,
+    tau_cost,
+    simplex_dim=None,
+    rho_lower_bounds=0.0,
+    cssca_solver="cvx",
+):
+    cssca_solver = normalize_cssca_solver(cssca_solver)
     if (not np.isfinite(func_value_np).all()) or (not np.isfinite(grad_np).all()) or (not np.isfinite(paras_t_np).all()):
         print("policy update skipped: non-finite func/grad/params")
         return paras_t_np
+    if cssca_solver == CSSCA_SOLVER_DUAL and can_use_dual_cssca(simplex_dim):
+        try:
+            paras_bar, info = solve_dual_cssca_update(
+                func_value_np,
+                grad_np,
+                paras_t_np,
+                tau_reward=tau_reward,
+                tau_cost=tau_cost,
+            )
+            if paras_bar is not None and np.isfinite(paras_bar).all():
+                return paras_bar
+            print("dual CSSCA fallback to cvx: status =", None if info is None else info.get("status"))
+        except Exception as ex:
+            print("dual CSSCA fallback to cvx:", repr(ex))
+    elif cssca_solver == CSSCA_SOLVER_DUAL:
+        _warn_dual_simplex_fallback()
+
+    if cp is None:
+        raise ModuleNotFoundError("cvxpy is required for Fused_CPRO.")
     x_val, paras_bar, _ = _feasible_update(
         func_value_np,
         grad_np,
@@ -1240,6 +1281,7 @@ def _train_sldac_like_actor(args, example_name, seed):
     gamma_pow_cost = float(args.gamma_pow_cost)
     tau_reward = float(args.tau_reward)
     tau_cost = float(args.tau_cost)
+    cssca_solver = getattr(args, "cssca_solver", "cvx")
     q_update_time = int(args.Q_update_time)
     window = int(args.window)
 
@@ -1307,7 +1349,14 @@ def _train_sldac_like_actor(args, example_name, seed):
                     actor_loss.backward()
                     grad_tilda[head] = _flatten_actor_grad(actor, log_std_leaf.grad)
                 grad = (1.0 - alpha) * grad + alpha * grad_tilda
-                theta_bar = _policy_update(func_value, grad, theta, tau_reward=tau_reward, tau_cost=tau_cost)
+                theta_bar = _policy_update(
+                    func_value,
+                    grad,
+                    theta,
+                    tau_reward=tau_reward,
+                    tau_cost=tau_cost,
+                    cssca_solver=cssca_solver,
+                )
                 theta = (1.0 - beta) * theta + beta * theta_bar
                 _set_actor_from_flat(actor, theta)
 
@@ -1450,6 +1499,7 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
     gamma_pow_cost = float(args.gamma_pow_cost)
     tau_reward = float(args.tau_reward)
     tau_cost = float(args.tau_cost)
+    cssca_solver = getattr(args, "cssca_solver", "cvx")
     q_update_time = int(args.Q_update_time)
     window = int(args.window)
 
@@ -1706,6 +1756,7 @@ def _run_policy_mix_main(args, example_name, algorithm_label, use_offline_data, 
                     tau_cost=tau_cost,
                     simplex_dim=rho.size,
                     rho_lower_bounds=rho_lower_bounds,
+                    cssca_solver=cssca_solver,
                 )
                 rho_before = np.asarray(rho, dtype=np.float64).copy()
                 rho_bar = theta_bar[:rho.size]
@@ -1764,6 +1815,7 @@ def _run_prcrl_main(args, example_name, return_aux):
     rho_scheduler_config = _build_rho_scheduler_config(args, beta_actor_pow)
     tau_reward = float(args.tau_reward)
     tau_cost = float(args.tau_cost)
+    cssca_solver = getattr(args, "cssca_solver", "cvx")
     window = int(args.window)
 
     env, actor_new, state_dim, action_dim, constraint_dim, constr_lim = _build_scene(
@@ -1882,6 +1934,7 @@ def _run_prcrl_main(args, example_name, return_aux):
             tau_cost=tau_cost,
             simplex_dim=rho.size,
             rho_lower_bounds=rho_lower_bounds,
+            cssca_solver=cssca_solver,
         )
         rho_bar = theta_bar[:rho.size]
         actor_bar = theta_bar[rho.size:]

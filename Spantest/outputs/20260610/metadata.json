@@ -1,0 +1,26 @@
+{
+  "config": {
+    "seed": 0,
+    "T": 500,
+    "grad_T": 500,
+    "num_new_data": 100,
+    "episode": 60,
+    "update_time_per_episode": 10,
+    "num_update_time": 600,
+    "q_update_time": 1,
+    "window": 10000,
+    "print_interval": 5,
+    "alpha_pow": 0.6,
+    "beta_pow": 0.7,
+    "eta_pow": 0.01,
+    "gamma_pow_reward": 0.3,
+    "gamma_pow_cost": 0.3,
+    "tau_reward": 1.0,
+    "tau_cost": 1.0,
+    "device": "cpu"
+  },
+  "solvers": [
+    "dual"
+  ],
+  "note": "reward_curve stores MIMO1 objective cost; lower is better."
+}

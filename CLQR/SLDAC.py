@@ -163,6 +163,7 @@ def SLDAC_main(args, example_name):
 	gamma_pow_cost = args.gamma_pow_cost
 	tau_reward = args.tau_reward
 	tau_cost = args.tau_cost
+	cssca_solver = getattr(args, "cssca_solver", "cvx")
 	Q_update_time = args.Q_update_time
 	window = args.window
 	run_tag = _get_run_tag(args)
@@ -335,7 +336,14 @@ def SLDAC_main(args, example_name):
 				grad = (1 - alpha) * grad + alpha * grad_tilda_torch.detach().cpu().numpy()
 
 				# update the policy parameter
-				paras_bar = update_policy(func_value, grad, paras_torch.detach().cpu().numpy(), tau_reward=tau_reward, tau_cost=tau_cost)
+				paras_bar = update_policy(
+					func_value,
+					grad,
+					paras_torch.detach().cpu().numpy(),
+					tau_reward=tau_reward,
+					tau_cost=tau_cost,
+					cssca_solver=cssca_solver,
+				)
 				paras_bar_torch = torch.tensor(paras_bar, dtype=torch.float, device=device)
 				paras_torch = (1 - beta) * paras_torch + beta * paras_bar_torch
 				ind = 0

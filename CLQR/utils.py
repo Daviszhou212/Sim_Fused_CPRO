@@ -3,6 +3,8 @@ import numpy as np
 import torch
 import shutil
 
+from cssca_dual_solver import CSSCA_SOLVER_DUAL, normalize_cssca_solver, solve_dual_cssca_update
+
 
 def soft_update(target, source, tau):
 	"""
@@ -44,7 +46,22 @@ def hard_update(target, source):
 
 
 
-def update_policy(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost):
+def update_policy(func_value_np, grad_np, paras_t_np, tau_reward, tau_cost, cssca_solver="cvx"):
+	cssca_solver = normalize_cssca_solver(cssca_solver)
+	if cssca_solver == CSSCA_SOLVER_DUAL:
+		try:
+			paras_bar, info = solve_dual_cssca_update(
+				func_value_np,
+				grad_np,
+				paras_t_np,
+				tau_reward=tau_reward,
+				tau_cost=tau_cost,
+			)
+			if paras_bar is not None and np.isfinite(paras_bar).all():
+				return paras_bar
+			print("dual CSSCA fallback to cvx: status =", None if info is None else info.get("status"))
+		except Exception as ex:
+			print("dual CSSCA fallback to cvx:", repr(ex))
 
 	x, paras_bar, prob_status_fea = _feasible_update(func_value_np, grad_np, paras_t_np, tau_cost)
 	if x == np.inf:

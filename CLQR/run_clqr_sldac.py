@@ -38,6 +38,7 @@ DEFAULT_GAMMA_POW_REWARD = 0.27
 DEFAULT_GAMMA_POW_COST = 0.27
 DEFAULT_TAU_REWARD = 10.0
 DEFAULT_TAU_COST = 10.0
+DEFAULT_CSSCA_SOLVER = "cvx"
 DEFAULT_DEVICE = "auto"
 DEFAULT_ACTOR_DISTRIBUTION = "squashed"
 DEFAULT_CHECKPOINT_ROOT = "checkpoints/SLDAC"
@@ -67,6 +68,7 @@ def build_python_config():
         "gamma_pow_cost": float(DEFAULT_GAMMA_POW_COST),
         "tau_reward": float(DEFAULT_TAU_REWARD),
         "tau_cost": float(DEFAULT_TAU_COST),
+        "cssca_solver": str(DEFAULT_CSSCA_SOLVER),
         "device": str(DEFAULT_DEVICE),
         "actor_distribution": str(DEFAULT_ACTOR_DISTRIBUTION),
         "checkpoint_root": str(DEFAULT_CHECKPOINT_ROOT),
@@ -183,6 +185,7 @@ def build_parser():
     parser.add_argument("--gamma_pow_cost", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--tau_reward", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--tau_cost", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--cssca-solver", "--cssca_solver", dest="cssca_solver", choices=["cvx", "dual"], default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
     parser.add_argument("--actor_distribution", type=str, choices=["squashed", "legacy"], default=argparse.SUPPRESS)
     parser.add_argument("--checkpoint_root", type=str, default=argparse.SUPPRESS)

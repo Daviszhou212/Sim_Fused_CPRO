@@ -38,6 +38,7 @@ DEFAULT_GAMMA_POW_REWARD = 0.3
 DEFAULT_GAMMA_POW_COST = 0.3
 DEFAULT_TAU_REWARD = 10.0
 DEFAULT_TAU_COST = 10.0
+DEFAULT_CSSCA_SOLVER = "cvx"
 DEFAULT_RHO_MIN_NEW_ACTOR = 1e-4
 DEFAULT_RHO_MIN_OLD_POLICY = 1e-4
 DEFAULT_DEVICE = "auto"
@@ -77,6 +78,7 @@ def build_python_config():
         "gamma_pow_cost": float(DEFAULT_GAMMA_POW_COST),
         "tau_reward": float(DEFAULT_TAU_REWARD),
         "tau_cost": float(DEFAULT_TAU_COST),
+        "cssca_solver": str(DEFAULT_CSSCA_SOLVER),
         "rho_min_new_actor": float(DEFAULT_RHO_MIN_NEW_ACTOR),
         "rho_min_old_policy": float(DEFAULT_RHO_MIN_OLD_POLICY),
         "device": str(DEFAULT_DEVICE),
@@ -453,6 +455,7 @@ def build_parser():
     parser.add_argument("--gamma_pow_cost", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--tau_reward", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--tau_cost", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--cssca-solver", "--cssca_solver", dest="cssca_solver", choices=["cvx", "dual"], default=argparse.SUPPRESS)
     parser.add_argument("--rho-min-new-actor", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--rho-min-old-policy", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--device", type=str, default=argparse.SUPPRESS)
