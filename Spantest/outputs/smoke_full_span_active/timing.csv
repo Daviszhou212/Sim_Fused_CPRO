@@ -1,4 +1,0 @@
-solver,update,branch,status,theta_dim,decision_dim,gradient_rank,solve_time_sec,feasible_x,objective_value,active_rows
-full,1,objective,optimal,25994,25994,5,2.665132000000085,-1.1537429112403772,-8.936186097079961,
-span,1,objective,optimal,25994,5,5,0.040392200000496814,-1.153742904943516,-8.936186058123376,
-active,1,objective,optimal,25994,3,3,0.03589800000008836,-1.0208161227259291,-8.936186073891614,0 2 3

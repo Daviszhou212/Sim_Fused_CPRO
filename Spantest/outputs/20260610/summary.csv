@@ -1,2 +1,0 @@
-solver,theta_dim,num_logged_points,num_actor_updates,final_objective_cost,final_constraint_cost,mean_solve_time_sec,max_solve_time_sec,mean_decision_dim,max_decision_dim
-dual,25994,60,599,1.2567903846151067,1.141618943823252,0.0016244719533061412,0.0052071000027353875,4.0,4
