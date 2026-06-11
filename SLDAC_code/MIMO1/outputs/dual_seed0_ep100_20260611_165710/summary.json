@@ -1,0 +1,34 @@
+{
+  "source": "D:\\Sim_Fused_CPRO\\SLDAC_code\\MIMO1",
+  "seed": 0,
+  "solver": "lagrangian_dual",
+  "config": {
+    "T": 500,
+    "num_new_data": 100,
+    "grad_T": 500,
+    "episode": 100,
+    "update_time_per_episode": 10,
+    "num_update_time": 1000,
+    "Q_update_time": 1,
+    "MAX_STEPS": 101000,
+    "alpha_pow": 0.6,
+    "beta_pow": 0.7,
+    "eta_pow": 0.01,
+    "gamma_pow_reward": 0.3,
+    "gamma_pow_cost": 0.3,
+    "tau_reward": 1.0,
+    "tau_cost": 1.0
+  },
+  "num_points": 100,
+  "final_objective_cost_real_power": 1.343723448465109,
+  "final_avg_delay_per_user": 1.123778244690034,
+  "mean_last_10_objective_cost_real_power": 1.3414776990769983,
+  "mean_last_10_avg_delay_per_user": 1.1322790179378766,
+  "files": {
+    "reward_mat": "D:\\Sim_Fused_CPRO\\SLDAC_code\\MIMO1\\outputs\\dual_seed0_ep100_20260611_165710\\SLDAC_dual_seed0_ep100_reward_b100_q1.mat",
+    "cost_mat": "D:\\Sim_Fused_CPRO\\SLDAC_code\\MIMO1\\outputs\\dual_seed0_ep100_20260611_165710\\SLDAC_dual_seed0_ep100_cost_b100_q1.mat",
+    "csv": "D:\\Sim_Fused_CPRO\\SLDAC_code\\MIMO1\\outputs\\dual_seed0_ep100_20260611_165710\\SLDAC_dual_seed0_ep100_metrics.csv",
+    "png": "D:\\Sim_Fused_CPRO\\SLDAC_code\\MIMO1\\outputs\\dual_seed0_ep100_20260611_165710\\SLDAC_dual_seed0_ep100_curves.png",
+    "pdf": "D:\\Sim_Fused_CPRO\\SLDAC_code\\MIMO1\\outputs\\dual_seed0_ep100_20260611_165710\\SLDAC_dual_seed0_ep100_curves.pdf"
+  }
+}

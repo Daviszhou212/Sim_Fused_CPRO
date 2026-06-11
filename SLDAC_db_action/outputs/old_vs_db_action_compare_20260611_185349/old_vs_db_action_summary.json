@@ -1,0 +1,28 @@
+{
+  "old_legacy_power_dual": {
+    "first_power": 5.347023673484155,
+    "final_power": 1.343723448465109,
+    "last10_power_mean": 1.3414776990769983,
+    "first_delay": 1.4308336805237898,
+    "final_delay": 1.123778244690034,
+    "last10_delay_mean": 1.1322790179378766,
+    "num_points": 100
+  },
+  "new_db_action_dual": {
+    "first_power": 5.281221050278476,
+    "final_power": 2.5976712781778586,
+    "last10_power_mean": 2.5910299807234454,
+    "first_delay": 1.4321335928368248,
+    "final_delay": 1.0981237182047836,
+    "last10_delay_mean": 1.1071309227348975,
+    "num_points": 100
+  },
+  "sources": {
+    "old_csv": "D:\\Sim_Fused_CPRO\\SLDAC_code\\MIMO1\\outputs\\dual_seed0_ep100_20260611_165710\\SLDAC_dual_seed0_ep100_metrics.csv",
+    "new_csv": "D:\\Sim_Fused_CPRO\\SLDAC_db_action\\outputs\\mimo_dual_action_compare_20260611_184015\\snr_db\\snr_db_metrics.csv"
+  },
+  "difference_new_minus_old_last10": {
+    "power": 1.249552281646447,
+    "delay": -0.025148095202979004
+  }
+}
