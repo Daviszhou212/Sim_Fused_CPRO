@@ -62,12 +62,15 @@ RUN_SELECTION = "new_only"  # "both" / "new_only" / "old_only"
 PRINT_INTERVAL = 1          # 每隔多少个记录 episode 打印一次指标；0 表示关闭
 ```
 
-`MIMO1/environment.py` 顶部可配置 dB 动作数值上界：
+`MIMO1/model.py` 顶部保留 legacy actor mean 上界：
 
 ```python
-LEGACY_POWER_ACTION_MAX = 2.5
-MIMO_SNR_DB_MAX = 10 * log10(LEGACY_POWER_ACTION_MAX / MIMO_NOISE_POWER)
+LEGACY_POWER_ACTION_MAX = 2.5  # 旧版 MIMO actor 均值上界：2.5 * sigmoid(raw)。
 ```
+
+dB-action 链路不再对执行功率施加 `2.5` 上界；只把 raw power 中的非正值映射到
+`1e-6`，这与 legacy SLDAC 的“均值有上界、采样/执行动作无上界、非正值折到
+`1e-6`”口径一致。
 
 输出默认写入：
 
@@ -77,7 +80,7 @@ SLDAC_db_action/outputs/<timestamp>/
 
 ## 当前诊断记录（2026-06-11）
 
-本目录的 dB-action 实现暴露出一个重要问题：它不仅改变了环境接口动作域，
+本目录的 dB-action 实现曾暴露出一个重要问题：它不仅改变了环境接口动作域，
 还让“环境执行动作”和“学习器记录动作”出现了语义分裂。
 
 旧版 power-action 链路是：
@@ -92,10 +95,18 @@ dB-action 链路是：
 raw power action -> copy 后转 SNR-dB -> env 转回真实 power -> buffer 保存 raw power action
 ```
 
-因此，两版都可能通过环境下限执行 `1e-6` 真实功率，但 critic 和
+修复前，两版都可能通过环境下限执行 `1e-6` 真实功率，但 critic 和
 score-function policy gradient 看到的 action 不一致。旧版 buffer 中保存的是
 环境原地裁剪后的 `1e-6`；dB-action 版 buffer 中保存的仍可能是 actor 采样出的
 非正 raw power。
+
+当前修复口径：`Environment_MIMO.step()` 在 `info["executed_power_action"]`
+中返回环境实际执行后的真实 power 坐标动作，`SLDAC.py` 和 `SCAOPO.py`
+写入 buffer 时使用该动作，确保 `(state, action, cost, next_state)` 的 action
+与产生 cost / next_state 的环境执行动作一致。
+
+当前对齐 legacy 的动作上界口径：`2.5` 只约束 actor mean，不约束环境执行
+power；dB-action 转换只把非正 raw power 折到 `1e-6`，正的小功率保持原值。
 
 ### 已确认现象
 
@@ -122,10 +133,14 @@ score-function policy gradient 看到的 action 不一致。旧版 buffer 中保
 
 ### 后续最小验证
 
-建议先做两个隔离 ablation，不要直接改算法主体：
+已加入 `MIMO1/test_db_action_buffer_semantics.py`，覆盖 dB-action 的 buffer
+动作必须等于环境实际执行后的真实 power action，并且执行 power 不再被额外截到
+`2.5`。
 
-1. dB-action 版：让 buffer 保存环境执行后的真实 power，再观察是否接近旧版低功率。
-2. 旧版 power-action：避免 `env.step()` 原地修改 actor 采样动作，让 buffer 保存
+如需继续量化这次修复对曲线的影响，建议再做两个隔离 ablation，且不要覆盖正式实验产物：
+
+1. 修复后的 dB-action 版：复跑隔离输出，再观察是否接近旧版低功率。
+2. 旧版 power-action 临时探针：避免 `env.step()` 原地修改 actor 采样动作，让 buffer 保存
    raw action，再观察是否失去低功率优势。
 
 这两个实验可以直接验证：功率差异的主因是不是 buffer 动作语义，而不是 dB 单位本身。

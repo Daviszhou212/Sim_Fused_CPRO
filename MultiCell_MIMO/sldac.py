@@ -14,6 +14,22 @@ from .seed_utils import resolve_torch_device, set_global_seed
 from .tree_critic import TreeMessageDifferentialCritic
 
 
+def multicell_power_action_to_db_action(action, env):
+    env_action = np.asarray(action, dtype=np.float64).reshape(-1).copy()
+    action_cells = env_action.reshape(env.cell_count, env.cell_action_dim)
+    power = action_cells[:, : env.users_per_cell]
+    # dB-action 环境只改变接口坐标；raw power 先对齐 MultiCell legacy floor。
+    safe_power = np.maximum(power, env.noise_power)
+    action_cells[:, : env.users_per_cell] = 10.0 * np.log10(safe_power / env.noise_power)
+    return action_cells.reshape(-1)
+
+
+def multicell_buffer_action_from_info(action, info, action_interface):
+    if str(action_interface) != "snr_db":
+        return action
+    return np.asarray(info["executed_power_action"], dtype=np.float64).reshape(-1).copy()
+
+
 def _resolve_run_id(config):
     configured = str(config.get("run_id", "")).strip()
     if configured:
@@ -154,6 +170,7 @@ def run_sldac(config):
         users_per_cell=int(config["users_per_cell"]),
         arrival_upper=float(config["arrival_upper"]),
         queue_max=float(config["queue_max"]),
+        action_interface=str(config["action_interface"]),
     )
     observation = env.reset()
     actor = SharedLocalGaussianActor(
@@ -198,12 +215,18 @@ def run_sldac(config):
         state = observation
         local_state = env.local_actor_observations()
         action = actor.sample_action(local_state, use_mean=False)
-        observation, objective_cost, done, info = env.step(action)
+        env_action = (
+            multicell_power_action_to_db_action(action, env)
+            if str(config["action_interface"]) == "snr_db"
+            else action
+        )
+        observation, objective_cost, done, info = env.step(env_action)
         _ = done
         costs = _build_cost_vector(objective_cost, info, env.constraint_dim, config["constraint_limit"])
+        buffer_action = multicell_buffer_action_from_info(action, info, config["action_interface"])
         buffer.store_experiences(
             state=state,
-            action=action,
+            action=buffer_action,
             costs=costs,
             next_state=observation,
             aver_objective=objective_cost,
@@ -315,5 +338,6 @@ def run_sldac(config):
         "cost_history": np.asarray(cost_history, dtype=np.float64),
         "func_value": np.asarray(func_value, dtype=np.float64),
         "critic_backend": str(config["critic_backend"]),
+        "action_interface": str(config["action_interface"]),
         "run_id": str(config["run_id"]),
     }

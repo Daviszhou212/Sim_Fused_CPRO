@@ -12,6 +12,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config["critic_target_mode"], "source_compatible")
         self.assertEqual(config["actor_parameterization"], "shared")
         self.assertEqual(config["log_std_mode"], "joint")
+        self.assertEqual(config["action_interface"], "legacy_power")
         self.assertEqual(config["log_std_min"], -5.0)
         self.assertEqual(config["log_std_max"], 2.0)
         self.assertLess(config["log_std_min"], config["log_std_max"])
@@ -21,7 +22,13 @@ class ConfigTest(unittest.TestCase):
     def test_invalid_enum_values_raise(self):
         from MultiCell_MIMO.config import build_default_config, validate_config
 
-        for field_name in ("critic_backend", "critic_target_mode", "actor_parameterization", "log_std_mode"):
+        for field_name in (
+            "critic_backend",
+            "critic_target_mode",
+            "actor_parameterization",
+            "log_std_mode",
+            "action_interface",
+        ):
             config = build_default_config()
             config[field_name] = "invalid"
             with self.assertRaises(ValueError):

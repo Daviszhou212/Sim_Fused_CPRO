@@ -6,6 +6,7 @@ CRITIC_TARGET_MODES = ("source_compatible",)
 ACTOR_PARAMETERIZATIONS = ("shared", "per_cell")
 LOG_STD_MODES = ("shared_cell", "joint")
 CSSCA_SOLVERS = ("lagrangian_dual", "cvx")
+ACTION_INTERFACES = ("legacy_power", "snr_db")
 
 
 def build_default_config():
@@ -20,6 +21,7 @@ def build_default_config():
         "arrival_upper": 2.0,
         "queue_max": 5.0,
         "power_max": 2.5,
+        "action_interface": "legacy_power",
         # 训练步数：保持顶部配置优先，避免 CLI 意外覆盖正式实验设置。
         "episode": 2,
         "update_time_per_episode": 2,
@@ -74,6 +76,7 @@ def validate_config(config):
     config.setdefault("q_update_time", 1)
     config.setdefault("run_id", "")
     config.setdefault("allow_overwrite", 0)
+    config.setdefault("action_interface", "legacy_power")
     if config["critic_backend"] not in CRITIC_BACKENDS:
         raise ValueError("unsupported critic_backend: {0}".format(config["critic_backend"]))
     if config["critic_target_mode"] not in CRITIC_TARGET_MODES:
@@ -84,6 +87,8 @@ def validate_config(config):
         raise ValueError("unsupported log_std_mode: {0}".format(config["log_std_mode"]))
     if config["cssca_solver"] not in CSSCA_SOLVERS:
         raise ValueError("unsupported cssca_solver: {0}".format(config["cssca_solver"]))
+    if config["action_interface"] not in ACTION_INTERFACES:
+        raise ValueError("unsupported action_interface: {0}".format(config["action_interface"]))
 
     for key in (
         "nt",

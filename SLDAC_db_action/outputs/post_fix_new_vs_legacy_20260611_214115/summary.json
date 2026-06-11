@@ -1,0 +1,66 @@
+{
+  "inputs": {
+    "snr_db_fixed_csv": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_db_action\\outputs\\mimo_dual_action_compare_20260611_212602\\snr_db\\snr_db_metrics.csv",
+    "legacy_power_csv": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_db_action\\outputs\\mimo_dual_action_compare_20260611_213400\\legacy_power\\legacy_power_metrics.csv"
+  },
+  "num_points": 100,
+  "metrics": {
+    "objective": {
+      "snr_db_fixed": {
+        "mean_all": 5.070670981088174,
+        "mean_first_10": 5.490140300497342,
+        "mean_last_10": 4.878162008260009,
+        "final": 4.886759964542613,
+        "min": 4.855381494082939,
+        "max": 5.534639014306897
+      },
+      "legacy_power": {
+        "mean_all": 1.7297477307996225,
+        "mean_first_10": 4.051490677272134,
+        "mean_last_10": 1.4275779209934691,
+        "final": 1.4303646070861535,
+        "min": 1.3674524689716783,
+        "max": 5.393352066006677
+      }
+    },
+    "delay": {
+      "snr_db_fixed": {
+        "mean_all": 1.4677706303187106,
+        "mean_first_10": 1.7186552370408184,
+        "mean_last_10": 1.3145159632981767,
+        "final": 1.3183300777227733,
+        "min": 1.2995702563380997,
+        "max": 1.8091745949744091
+      },
+      "legacy_power": {
+        "mean_all": 1.2173683694530142,
+        "mean_first_10": 1.3813696778847204,
+        "mean_last_10": 1.141791502725105,
+        "final": 1.1348275629290743,
+        "min": 1.1304667366078494,
+        "max": 1.5396825306495916
+      }
+    }
+  },
+  "differences": {
+    "objective": {
+      "mean_all": 3.340923250288552,
+      "mean_first_10": 1.438649623225207,
+      "mean_last_10": 3.4505840872665394,
+      "final": 3.4563953574564596,
+      "min": -0.06580263836398981,
+      "max": 3.7770036143413277,
+      "last_10_relative_to_legacy": 2.4170898390367617
+    },
+    "delay": {
+      "mean_all": 0.25040226086569656,
+      "mean_first_10": 0.33728555915609776,
+      "mean_last_10": 0.1727244605730713,
+      "final": 0.18350251479369906,
+      "min": 0.0012999712024628352,
+      "max": 0.5549822599792484,
+      "last_10_relative_to_legacy": 0.15127495708352282
+    }
+  },
+  "segment_stats_csv": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_db_action\\outputs\\post_fix_new_vs_legacy_20260611_214115\\segment_stats.csv"
+}

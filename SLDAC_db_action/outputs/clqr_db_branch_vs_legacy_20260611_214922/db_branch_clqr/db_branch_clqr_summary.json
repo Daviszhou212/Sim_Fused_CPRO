@@ -1,0 +1,34 @@
+{
+  "mode": "db_branch_clqr",
+  "config": {
+    "T": 250,
+    "grad_T": 250,
+    "window": 10000,
+    "num_new_data": 100,
+    "episode": 100,
+    "update_time_per_episode": 10,
+    "num_update_time": 1000,
+    "Q_update_time": 5,
+    "MAX_STEPS": 100500,
+    "alpha_pow": 0.6,
+    "beta_pow": 0.8,
+    "eta_pow": 0.01,
+    "gamma_pow_reward": 0.27,
+    "gamma_pow_cost": 0.27,
+    "tau_reward": 10.0,
+    "tau_cost": 10.0,
+    "print_interval": 1,
+    "scene": "CLQR",
+    "modes": [
+      "db_branch_clqr",
+      "legacy_clqr"
+    ],
+    "db_source": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_db_action\\MIMO1",
+    "legacy_source": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_code\\CLQR1"
+  },
+  "num_points": 100,
+  "final_objective_cost": 38.53004031109376,
+  "final_constraint_cost": 530.0055210789839,
+  "csv": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_db_action\\outputs\\clqr_db_branch_vs_legacy_20260611_214922\\db_branch_clqr\\db_branch_clqr_metrics.csv",
+  "mat": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_db_action\\outputs\\clqr_db_branch_vs_legacy_20260611_214922\\db_branch_clqr\\db_branch_clqr_metrics.mat"
+}

@@ -11,9 +11,16 @@ import torch
 
 def mimo_power_action_to_db_action(action, env):
 	env_action = action.copy()
-	power = np.maximum(env_action[0: env.UE_num], env.noise_power)
+	power = env_action[0: env.UE_num]
+	power = np.where(power <= 0, env.noise_power, power)
 	env_action[0: env.UE_num] = 10.0 * np.log10(power / env.noise_power)
 	return env_action
+
+def mimo_buffer_action_from_info(action, info, example_name):
+	if 'MIMO' not in example_name:
+		return action
+	# dB-action 环境执行的是裁剪后的真实 power，buffer 必须保存同一语义动作。
+	return info['executed_power_action'].copy()
 
 
 def SLDAC_main(args, example_name):
@@ -83,6 +90,7 @@ def SLDAC_main(args, example_name):
 		action = actor.sample_action(state)
 		env_action = mimo_power_action_to_db_action(action, env) if 'MIMO' in example_name else action.copy()
 		observation, reward, done, info = env.step(env_action)  # reward is the objective cost in the paper.
+		buffer_action = mimo_buffer_action_from_info(action, info, example_name)
 		next_state = observation
 		costs = np.zeros(constraint_dim + 1)
 		costs[0] = reward
@@ -91,7 +99,7 @@ def SLDAC_main(args, example_name):
 
 		aver_reward = reward
 		aver_cost = info.get('cost', 0) / constraint_dim
-		buffer.store_experiences(state, action, costs, next_state, aver_reward, aver_cost)
+		buffer.store_experiences(state, buffer_action, costs, next_state, aver_reward, aver_cost)
 
 		# update the policy
 		if t > 2*T and ((t-2*T) % (num_new_data/Q_update_time) == 0):

@@ -2,9 +2,6 @@
 
 MIMO_NOISE_POWER = 1e-6  # Noise power used by the MIMO environment.
 LEGACY_ACTION_MIN = 1e-6  # Legacy replacement for non-positive actions.
-LEGACY_POWER_ACTION_MAX = 2.5  # Legacy MIMO actor mean upper bound: 2.5 * sigmoid(raw).
-MIMO_SNR_DB_MIN = 10.0 * np.log10(LEGACY_ACTION_MIN / MIMO_NOISE_POWER)
-MIMO_SNR_DB_MAX = 10.0 * np.log10(LEGACY_POWER_ACTION_MAX / MIMO_NOISE_POWER)
 
 class Environment_MIMO(object):
     """The environment class of the MIMO power allocation.
@@ -69,17 +66,18 @@ class Environment_MIMO(object):
         np.random.seed(self.seed_step)
         self.seed_step += 1
         action = action.reshape(-1)
-        action[0: self.UE_num] = np.clip(action[0: self.UE_num], MIMO_SNR_DB_MIN, MIMO_SNR_DB_MAX)
         if action[self.UE_num] <= 0:
             action[self.UE_num] = LEGACY_ACTION_MIN
         snr_db = action[0: self.UE_num]
         power = self.noise_power * (10 ** (snr_db / 10))
         reg_factor = action[self.UE_num]
+        executed_power_action = np.hstack((power.copy(), np.array([reg_factor])))
 
         reward = np.sum(power)
         costs = self.D
         info = {'cost_' + str(i): costs[i - 1] for i in range(1, self.UE_num + 1)}
         info['cost'] = np.sum(costs)
+        info['executed_power_action'] = executed_power_action
 
         try:
             V = self.H.conjugate().T @ np.linalg.inv(self.H @ self.H.conjugate().T + reg_factor * np.eye(self.UE_num))

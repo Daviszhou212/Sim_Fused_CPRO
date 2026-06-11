@@ -1,0 +1,88 @@
+{
+  "new_snr_db_csv": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_db_action\\outputs\\mimo_dual_action_compare_20260611_224449\\snr_db\\snr_db_metrics.csv",
+  "legacy_power_csv": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_db_action\\outputs\\mimo_legacy_compare_20260611_225341\\legacy_power\\legacy_power_metrics.csv",
+  "new_snr_db": {
+    "num_points": 100,
+    "first": {
+      "episode": 1,
+      "objective": 5.347023538575185,
+      "delay": 1.4308338339489168
+    },
+    "final": {
+      "episode": 100,
+      "objective": 1.2017459308829985,
+      "delay": 1.1160976958754572
+    },
+    "last10": {
+      "objective_mean": 1.1965670167742708,
+      "delay_mean": 1.128115653685636,
+      "objective_min": 1.1789145308361826,
+      "delay_min": 1.1135501457086288
+    },
+    "last20": {
+      "objective_mean": 1.1883933419176413,
+      "delay_mean": 1.1436201842655234,
+      "objective_min": 1.1663917357500266,
+      "delay_min": 1.1135501457086288
+    },
+    "global_min_objective": {
+      "episode": 85,
+      "objective": 1.1663917357500266,
+      "delay": 1.1711164540007617
+    },
+    "global_min_delay": {
+      "episode": 98,
+      "objective": 1.20454201691576,
+      "delay": 1.1135501457086288
+    }
+  },
+  "legacy_power": {
+    "num_points": 100,
+    "first": {
+      "episode": 1,
+      "objective": 5.347023600670124,
+      "delay": 1.4308337773521045
+    },
+    "final": {
+      "episode": 100,
+      "objective": 1.4303646070861535,
+      "delay": 1.1348275629290743
+    },
+    "last10": {
+      "objective_mean": 1.4275779209934694,
+      "delay_mean": 1.141791502725105,
+      "objective_min": 1.4106768656969926,
+      "delay_min": 1.1304667366078494
+    },
+    "last20": {
+      "objective_mean": 1.4198261823649754,
+      "delay_mean": 1.1563112927905272,
+      "objective_min": 1.4058711729344913,
+      "delay_min": 1.1304667366078494
+    },
+    "global_min_objective": {
+      "episode": 75,
+      "objective": 1.3674524689716783,
+      "delay": 1.177456309886727
+    },
+    "global_min_delay": {
+      "episode": 97,
+      "objective": 1.4387059840348828,
+      "delay": 1.1304667366078494
+    }
+  },
+  "deltas_new_minus_legacy": {
+    "final": {
+      "objective_delta_new_minus_legacy": -0.228618676203155,
+      "delay_delta_new_minus_legacy": -0.018729867053617122
+    },
+    "last10": {
+      "objective_mean_delta_new_minus_legacy": -0.23101090421919857,
+      "delay_mean_delta_new_minus_legacy": -0.013675849039469057
+    },
+    "last20": {
+      "objective_mean_delta_new_minus_legacy": -0.23143284044733403,
+      "delay_mean_delta_new_minus_legacy": -0.01269110852500388
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "mode": "snr_db",
+  "config": {
+    "T": 500,
+    "num_new_data": 100,
+    "window": 10000,
+    "grad_T": 500,
+    "episode": 100,
+    "update_time_per_episode": 10,
+    "num_update_time": 1000,
+    "Q_update_time": 1,
+    "MAX_STEPS": 101000,
+    "alpha_pow": 0.6,
+    "beta_pow": 0.7,
+    "eta_pow": 0.01,
+    "gamma_pow_reward": 0.3,
+    "gamma_pow_cost": 0.3,
+    "tau_reward": 1,
+    "tau_cost": 1,
+    "cssca_solver": "dual",
+    "run_selection": "new_only",
+    "selected_modes": [
+      "snr_db"
+    ],
+    "print_interval": 1
+  },
+  "num_points": 100,
+  "final_objective_cost_real_power": 4.886759964542613,
+  "final_avg_delay_per_user": 1.3183300777227733,
+  "csv": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_db_action\\outputs\\mimo_dual_action_compare_20260611_212602\\snr_db\\snr_db_metrics.csv",
+  "mat": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_db_action\\outputs\\mimo_dual_action_compare_20260611_212602\\snr_db\\snr_db_metrics.mat"
+}

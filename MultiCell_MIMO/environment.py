@@ -5,6 +5,8 @@ DEFAULT_DIRECT_GAIN_DB_RANGE = (-10.0, 10.0)
 DEFAULT_CROSS_GAIN_DB_RANGE = (-30.0, -10.0)
 DEFAULT_PATH_COUNT = 4
 ACTION_EPS = 1e-6
+ACTION_INTERFACE_LEGACY_POWER = "legacy_power"
+ACTION_INTERFACE_SNR_DB = "snr_db"
 
 
 class MultiCellMIMOEnv:
@@ -19,6 +21,7 @@ class MultiCellMIMOEnv:
         direct_gain_db_range=DEFAULT_DIRECT_GAIN_DB_RANGE,
         cross_gain_db_range=DEFAULT_CROSS_GAIN_DB_RANGE,
         path_count=DEFAULT_PATH_COUNT,
+        action_interface=ACTION_INTERFACE_LEGACY_POWER,
     ):
         self.seed = int(seed)
         self.nt = int(nt)
@@ -38,6 +41,9 @@ class MultiCellMIMOEnv:
         self.arrival_upper = float(arrival_upper)
         self.queue_max = float(queue_max)
         self.noise_power = 1e-6
+        self.action_interface = str(action_interface)
+        if self.action_interface not in (ACTION_INTERFACE_LEGACY_POWER, ACTION_INTERFACE_SNR_DB):
+            raise ValueError("unsupported action_interface: {0}".format(self.action_interface))
         self.path_count = int(path_count)
         self.seed_step = self.seed
         np.random.seed(self.seed)
@@ -113,11 +119,19 @@ class MultiCellMIMOEnv:
         action = np.asarray(action, dtype=np.float64).reshape(-1)
         if action.size != self.action_dim:
             raise ValueError("action_dim mismatch: expected {0}, got {1}".format(self.action_dim, action.size))
-        action = np.maximum(action, ACTION_EPS)
         action = action.reshape(self.cell_count, self.cell_action_dim)
-        power = action[:, : self.users_per_cell]
-        reg = action[:, self.users_per_cell]
-        return power, reg
+        if self.action_interface == ACTION_INTERFACE_LEGACY_POWER:
+            executed = np.maximum(action, ACTION_EPS)
+        else:
+            executed = action.copy()
+            executed[:, : self.users_per_cell] = self.noise_power * np.power(
+                10.0,
+                executed[:, : self.users_per_cell] / 10.0,
+            )
+            executed[:, self.users_per_cell] = np.maximum(executed[:, self.users_per_cell], ACTION_EPS)
+        power = executed[:, : self.users_per_cell]
+        reg = executed[:, self.users_per_cell]
+        return power, reg, executed.reshape(-1)
 
     def _cell_beamformer(self, tx_cell, reg_value):
         h_direct = self.h[tx_cell, :, tx_cell, :]
@@ -155,12 +169,13 @@ class MultiCellMIMOEnv:
     def step(self, action):
         np.random.seed(self.seed_step)
         self.seed_step += 1
-        power, reg = self._decode_action(action)
+        power, reg, executed_power_action = self._decode_action(action)
         objective_cost = float(np.sum(power))
         current_costs = self.queue.reshape(-1).copy()
         info = {"cost_{0}".format(idx + 1): float(value) for idx, value in enumerate(current_costs)}
         info["cost"] = float(np.sum(current_costs))
         info["cell_cost"] = np.sum(self.queue, axis=1).astype(np.float64, copy=False)
+        info["executed_power_action"] = executed_power_action.copy()
 
         rates = self._compute_rates(power, reg)
         arrivals = np.random.uniform(0.0, self.arrival_upper, size=(self.cell_count, self.users_per_cell))
