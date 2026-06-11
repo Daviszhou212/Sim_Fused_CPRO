@@ -4,11 +4,11 @@
 
 ## 背景
 
-用户希望阅读 `CMARL_revised_CN.tex` 后，结合 SLDAC 论文源码，构建一个新的多小区场景。新场景不应继续嵌入现有 `MIMO/` 主线，而应放在新的子文件夹中，形成完整独立实现。
+用户希望阅读 `CMARL_revised_CN.tex` 后，结合 SLDAC 论文源码，构建一个新的多小区场景。新场景不应继续嵌入现有 `Squash/MIMO/` 主线，而应放在新的子文件夹中，形成完整独立实现。
 
 当前仓库已有两类相关材料：
 
-- `MIMO/SLDAC.py`、`MIMO/critic_opt.py`、`MIMO/utils.py` 是 SLDAC 论文源码风格实现的当前主线版本。
+- `Squash/MIMO/SLDAC.py`、`Squash/MIMO/critic_opt.py`、`Squash/MIMO/utils.py` 是 SLDAC 论文源码风格实现的当前主线版本。
 - 旧 `MIMO` 内嵌多小区 prototype 已移除；多小区 CTDE / tree critic 场景统一落在 `MultiCell_MIMO/`。
 - `CMARL_revised_CN.tex` 将问题修正为 multi-agent infinite-horizon average-cost CMDP，并要求 critic 使用 SLDAC 的 average-cost differential Q 半梯度 TD 更新，actor 使用 CSSCA surrogate。
 
@@ -33,14 +33,14 @@ C_k' = C_k - c_k,  k >= 1
 1. 新建独立目录 `MultiCell_MIMO/`，包含环境、actor、critic、buffer、CSSCA、配置、seed/device、checkpoint、SLDAC 主循环、运行入口与单元测试。
 2. v1 先实现一个可验证的多小区 SLDAC baseline：多小区无线环境、分散执行 actor、集中训练 critic、SLDAC average-cost TD 与 CSSCA actor update。
 3. v2 在同一独立目录内加入 `CMARL_revised_CN.tex` 的树状可微消息传递 critic，逐步替换 v1 的集中式 critic。
-4. 所有输出、checkpoint、临时 smoke 产物必须隔离在 `MultiCell_MIMO/outputs/`、`MultiCell_MIMO/checkpoints/` 或临时目录中，不写入现有 `MIMO/outputs`、`result/` 或历史实验目录。
+4. 所有输出、checkpoint、临时 smoke 产物必须隔离在 `MultiCell_MIMO/outputs/`、`MultiCell_MIMO/checkpoints/` 或临时目录中，不写入现有 `Squash/MIMO/outputs`、`result/` 或历史实验目录。
 5. 顶部配置优先：运行入口的可调参数集中放在 `.py` 文件顶部，CLI 只作为可选覆盖，不作为主要配置方式。
 
 ## 非目标
 
 1. 不在第一阶段实现 Fused-CPRO、PRCRL、HRL、DK policy reuse。
-2. 不直接把现有 `MIMO/SLDAC.py` 拷贝后机械改名作为长期结构；可以参考其算法逻辑，但新目录应有清晰模块边界。
-3. 不修改现有 `MIMO/`、`CLQR/`、`result/` 的训练入口和实验产物。
+2. 不直接把现有 `Squash/MIMO/SLDAC.py` 拷贝后机械改名作为长期结构；可以参考其算法逻辑，但新目录应有清晰模块边界。
+3. 不修改现有 `Squash/MIMO/`、`Squash/CLQR/`、`result/` 的训练入口和实验产物。
 4. 不运行 `run_mimo_*`、`run_multicell_*` 这类可能落盘训练产物的脚本，除非输出已明确隔离并得到用户确认。
 5. 不在 v1 承诺完全分布式训练通信；v1 是工程 baseline，v2 才加入树状消息 critic。
 
@@ -78,7 +78,7 @@ MultiCell_MIMO/
 `config.py` 负责顶部默认值、CLI 可选覆盖与受保护字段；`seed_utils.py`
 负责 NumPy/Torch seed、device 解析和可复现实验设置；`checkpoint.py`
 负责 schema、CPU `state_dict`、临时 checkpoint 路径和禁用保存开关。新目录不得
-从 `MIMO/` 隐式导入这些运行时工具。
+从 `Squash/MIMO/` 隐式导入这些运行时工具。
 
 ## 场景定义
 
@@ -326,7 +326,7 @@ bar_phi     = (1 - gamma_t) * bar_phi     + gamma_t * phi
 ### 禁止的验证方式
 
 不直接运行正式训练配置；不在测试中调用 `run_multicell_sldac.py`；不生成覆盖式
-`.mat`、`.png`、`.pdf`、checkpoint 到 `MIMO/outputs`、`result/`、仓库根
+`.mat`、`.png`、`.pdf`、checkpoint 到 `Squash/MIMO/outputs`、`result/`、仓库根
 `checkpoints/` 或任何历史路径。
 
 ## 迁移与复用边界
@@ -341,7 +341,7 @@ bar_phi     = (1 - gamma_t) * bar_phi     + gamma_t * phi
 - actor 参数 flatten / restore。
 - seed/device/config/checkpoint 的边界设计。
 
-不直接复用现有模块作为 runtime dependency。新目录应能独立导入和测试，避免后续修改 `MIMO/` 时影响新场景。
+不直接复用现有模块作为 runtime dependency。新目录应能独立导入和测试，避免后续修改 `Squash/MIMO/` 时影响新场景。
 
 ## 风险与开放问题
 
@@ -354,7 +354,7 @@ bar_phi     = (1 - gamma_t) * bar_phi     + gamma_t * phi
 
 ## 验收标准
 
-1. 新增 `MultiCell_MIMO/` 独立目录，不修改现有 `MIMO/` 算法主线。
+1. 新增 `MultiCell_MIMO/` 独立目录，不修改现有 `Squash/MIMO/` 算法主线。
 2. 单元测试覆盖配置、checkpoint、环境、actor、critic、CSSCA、SLDAC smoke。
 3. smoke test 不写正式实验产物。
 4. 文档和代码注释都保持 average-cost / objective-cost 口径。

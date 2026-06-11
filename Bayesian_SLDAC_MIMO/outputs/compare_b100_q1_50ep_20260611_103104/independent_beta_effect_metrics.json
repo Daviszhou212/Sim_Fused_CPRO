@@ -1,0 +1,54 @@
+{
+  "runs": {
+    "independent beta=0.00": {
+      "beta_uncertainty": 0.0,
+      "objective_avg_final": 5.254916139329246,
+      "average_cost_final": 1.1394370724224216,
+      "worst_user_constraint_residual_final": 0.09161942169902239,
+      "q_std_objective_max": 1.0900263786315918,
+      "q_std_objective_mean": 0.601262886681872,
+      "q_std_constraints_max": 8.021856307983398,
+      "q_std_constraints_mean": 1.5954852867019471,
+      "q_used_batch_std_final": [
+        1.653699952933487,
+        0.1753389943279455,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "independent beta=0.05": {
+      "beta_uncertainty": 0.05,
+      "objective_avg_final": 6.176327112146345,
+      "average_cost_final": 1.2165659681465921,
+      "worst_user_constraint_residual_final": 0.39358782820460664,
+      "q_std_objective_max": 2.168306589126587,
+      "q_std_objective_mean": 1.1963026417281202,
+      "q_std_constraints_max": 8.261035919189453,
+      "q_std_constraints_mean": 1.6132276094702707,
+      "q_used_batch_std_final": [
+        3.378530508877469,
+        2.46450150677906,
+        1.2038981235798078e-09,
+        0.792872193243671,
+        0.0
+      ]
+    }
+  },
+  "curve_diffs": {
+    "objective_avg": {
+      "max_abs_diff": 0.9214109728170996,
+      "final_diff_beta005_minus_beta000": 0.9214109728170996
+    },
+    "average_cost": {
+      "max_abs_diff": 0.2012320499795308,
+      "final_diff_beta005_minus_beta000": 0.07712889572417048
+    },
+    "worst_user_constraint_residual": {
+      "max_abs_diff": 1.2318404033166834,
+      "final_diff_beta005_minus_beta000": 0.30196840650558426
+    }
+  },
+  "plot_png": "D:\\Sim_Fused_CPRO\\Bayesian_SLDAC_MIMO\\outputs\\compare_b100_q1_50ep_20260611_103104\\independent_beta_effect_b100_q1_50ep.png",
+  "plot_pdf": "D:\\Sim_Fused_CPRO\\Bayesian_SLDAC_MIMO\\outputs\\compare_b100_q1_50ep_20260611_103104\\independent_beta_effect_b100_q1_50ep.pdf"
+}

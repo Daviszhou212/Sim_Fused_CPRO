@@ -4,7 +4,7 @@
 
 **Goal:** Build an independent `MultiCell_MIMO/` package implementing the v1 multi-cell SLDAC baseline from `docs/superpowers/specs/2026-06-10-multicell-mimo-independent-sldac-design.md`.
 
-**Architecture:** Keep the new scenario isolated from `MIMO/`. Implement a CTDE baseline with multi-cell environment, shared local actor, centralized multi-head critic, Lagrangian-dual CSSCA solver, explicit `critic_target_mode`, isolated artifact/checkpoint roots, and focused unit tests.
+**Architecture:** Keep the new scenario isolated from `Squash/MIMO/`. Implement a CTDE baseline with multi-cell environment, shared local actor, centralized multi-head critic, Lagrangian-dual CSSCA solver, explicit `critic_target_mode`, isolated artifact/checkpoint roots, and focused unit tests.
 
 **Tech Stack:** Python, NumPy, PyTorch, SciPy, optional CVXPY fallback, `unittest`.
 

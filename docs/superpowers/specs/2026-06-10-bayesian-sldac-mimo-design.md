@@ -6,7 +6,7 @@
 
 本设计用于在仓库根目录新增一个独立子项目，实现面向 MIMO 环境的
 Bayesian critic SLDAC。新实现用于和 `SLDAC_code/MIMO1` 中的原始 SLDAC
-做仿真比较，不直接修改 `SLDAC_code/`、`MIMO/`、`CLQR/` 或
+做仿真比较，不直接修改 `SLDAC_code/`、`Squash/MIMO/`、`Squash/CLQR/` 或
 `MultiCell_MIMO/` 的主线代码。
 
 本项目口径仍然是 infinite-horizon average-cost CMDP。代码中的
@@ -16,7 +16,7 @@ Bayesian critic SLDAC。新实现用于和 `SLDAC_code/MIMO1` 中的原始 SLDAC
 为 objective cost，含义是待最小化，越低越好。
 
 用户已明确要求：Bayesian 版的 SLDAC 算法与配置应对齐 `SLDAC_code/MIMO1`
-的 SLDAC，而不是当前主线 `MIMO/` 目录中的后续实现。随机流、动作分布、有界动作
+的 SLDAC，而不是当前主线 `Squash/MIMO/` 目录中的后续实现。随机流、动作分布、有界动作
 处理、默认 seed、CPU 设备、输出命名和 SLDAC 时间尺度都应按
 `SLDAC_code/MIMO1` 复刻；Bayesian critic 和拉格朗日 CSSCA solver 是第一版的
 主要差异。
@@ -28,7 +28,7 @@ Bayesian critic SLDAC。新实现用于和 `SLDAC_code/MIMO1` 中的原始 SLDAC
    channel 生成、queue 更新、arrival 分布和动作投影行为。
 3. actor 默认复刻 `SLDAC_code/MIMO1/model.py` 的 Gaussian actor：均值经
    `2.5 * sigmoid` 限制，但采样仍是 plain `Normal(mu, std)`，不使用当前主线
-   `MIMO/` 的 squashed transformed Gaussian。
+   `Squash/MIMO/` 的 squashed transformed Gaussian。
 4. 算法参数、样本量、episode/run 配置默认对齐 `SLDAC_code/MIMO1/MIMO_main.py`
    和 `SLDAC_code/MIMO1/SLDAC.py`。
 5. 保留 SLDAC 的 average-cost critic TD、`func_value` 平滑估计、
@@ -45,7 +45,7 @@ Bayesian critic SLDAC。新实现用于和 `SLDAC_code/MIMO1` 中的原始 SLDAC
 1. 第一版不实现完整 Bayesian neural network、MCMC 或 variational posterior。
    先使用 bootstrap ensemble 作为可落地的不确定性估计。
 2. 不改写 MIMO 环境定义，不重新定义 objective/cost 语义。
-3. 不引入当前主线 `MIMO/` 的 squashed actor、checkpoint schema、multi-seed runner
+3. 不引入当前主线 `Squash/MIMO/` 的 squashed actor、checkpoint schema、multi-seed runner
    或 artifact migration 逻辑。
 4. 不实现 model-based Bayesian RL，不学习 transition posterior。
 5. 不修改 Fused-CPRO、PRCRL、Pathwise/Q-Prop 实现。
@@ -134,7 +134,7 @@ reg_factor = action[UE_num]
 
 环境没有对 power 或 reg_factor 做上界截断。因此 Bayesian 版第一版必须保留这个
 “bounded mean + unbounded Gaussian sample + environment lower projection”的旧语义，
-不能使用当前主线 `MIMO/` 的 `squashed_gaussian_v1`、tanh/sigmoid Jacobian 修正、
+不能使用当前主线 `Squash/MIMO/` 的 `squashed_gaussian_v1`、tanh/sigmoid Jacobian 修正、
 transform metadata 或 bounded log-prob。
 
 ### MIMO 环境参数
@@ -415,7 +415,7 @@ Bayesian_SLDAC_MIMO/logs/<run_tag>/
    - `test_lagrangian_cssca_no_cvx_fallback_on_default_path`：默认 solver 不静默退到
      CVX/MOSEK，小规模可行/不可行问题返回有限 `theta_bar` 或保守回退 `theta_t`。
    - `test_artifact_paths_are_isolated`：所有输出路径都在 `Bayesian_SLDAC_MIMO/` 内，
-     不落到 `SLDAC_code/MIMO1`、`MIMO/outputs` 或仓库根 `checkpoints/SLDAC`。
+     不落到 `SLDAC_code/MIMO1`、`Squash/MIMO/outputs` 或仓库根 `checkpoints/SLDAC`。
 3. 最小 smoke test 只能使用 `--smoke` 或测试内构造的小配置，输出写入
    `Bayesian_SLDAC_MIMO/Trash/<unique-run>/`，完成后不得长留正式目录。
 
@@ -442,7 +442,7 @@ Bayesian_SLDAC_MIMO/logs/<run_tag>/
 1. 先采用 Bayesian critic ensemble。
 2. objective head 使用乐观修正。
 3. constraint heads 使用保守修正。
-4. SLDAC 算法和配置对齐 SLDAC_code/MIMO1，而不是当前 MIMO/。
+4. SLDAC 算法和配置对齐 SLDAC_code/MIMO1，而不是当前 Squash/MIMO/。
 5. 随机流、有界动作/动作投影等细节也按 SLDAC_code/MIMO1 对齐。
 ```
 

@@ -58,7 +58,7 @@ class ConfigTest(unittest.TestCase):
         )
         package_root = os.path.abspath(PACKAGE_ROOT)
         repo_root = os.path.dirname(package_root)
-        legacy_mimo_outputs = os.path.abspath(os.path.join(repo_root, "MIMO", "outputs"))
+        legacy_mimo_outputs = os.path.abspath(os.path.join(repo_root, "Squash", "MIMO", "outputs"))
         legacy_checkpoints = os.path.abspath(os.path.join(repo_root, "checkpoints", "SLDAC"))
         legacy_sldac_code = os.path.abspath(os.path.join(repo_root, "SLDAC_code", "MIMO1"))
 

@@ -13,7 +13,7 @@
 ### Task 1: Lock Configuration Behavior With Tests
 
 **Files:**
-- Create: `MIMO/test_actor_distribution_config.py`
+- Create: `Squash/MIMO/test_actor_distribution_config.py`
 
 - [x] **Step 1: Write failing tests**
 
@@ -28,8 +28,8 @@ Expected: FAIL because factory helpers and entry config fields do not exist yet.
 ### Task 2: Add Policy Factory and Legacy Actors
 
 **Files:**
-- Modify: `MIMO/model.py`
-- Modify: `CLQR/model.py`
+- Modify: `Squash/MIMO/model.py`
+- Modify: `Squash/CLQR/model.py`
 
 - [ ] **Step 1: Implement canonical distribution helpers**
 
@@ -46,12 +46,12 @@ Run the new test and existing squashed Gaussian tests.
 ### Task 3: Route Algorithms Through the Factory
 
 **Files:**
-- Modify: `MIMO/SLDAC.py`
-- Modify: `CLQR/SLDAC.py`
-- Modify: `MIMO/SLDAC_Pathwise.py`
-- Modify: `CLQR/SLDAC_Pathwise.py`
-- Modify: `MIMO/Fused_CPRO.py`
-- Modify: `CLQR/Fused_CPRO.py`
+- Modify: `Squash/MIMO/SLDAC.py`
+- Modify: `Squash/CLQR/SLDAC.py`
+- Modify: `Squash/MIMO/SLDAC_Pathwise.py`
+- Modify: `Squash/CLQR/SLDAC_Pathwise.py`
+- Modify: `Squash/MIMO/Fused_CPRO.py`
+- Modify: `Squash/CLQR/Fused_CPRO.py`
 
 - [ ] **Step 1: Use `build_gaussian_policy()` for new actors**
 
@@ -68,7 +68,7 @@ Treat missing checkpoint distribution as legacy, instantiate old policies with t
 ### Task 4: Add Entry Configuration
 
 **Files:**
-- Modify Gaussian actor run entries under `MIMO/` and `CLQR/`
+- Modify Gaussian actor run entries under `Squash/MIMO/` and `Squash/CLQR/`
 
 - [ ] **Step 1: Add `DEFAULT_ACTOR_DISTRIBUTION = "squashed"`**
 
