@@ -36,7 +36,7 @@ class RunConfig:
     beta_uncertainty: float = 0.0
     bootstrap_mask_prob: float = 1.0
     # critic Adam 基础学习率，实际 lr=critic_lr_base/sqrt(Q_update_time)。
-    critic_lr_base: float = 0.01
+    critic_lr_base: float = 0.1
     # Bayesian critic 独立随机流种子，避免额外 ensemble 扰动 actor 采样流。
     critic_seed: int = 10000
     # ensemble 初始化方式：shared 避免未训练 member 初始饱和分歧；independent 用于诊断对照。

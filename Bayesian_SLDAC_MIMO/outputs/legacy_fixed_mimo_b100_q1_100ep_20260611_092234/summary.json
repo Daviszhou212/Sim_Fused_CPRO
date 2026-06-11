@@ -1,0 +1,72 @@
+{
+  "run_tag": "b100_q1",
+  "episode": 100,
+  "mode": "legacy",
+  "config": {
+    "example_name": "MIMO",
+    "run_tag": "b100_q1",
+    "run_label": "Bayesian SLDAC, batchsize=100, q=1",
+    "seed": 0,
+    "device": "cpu",
+    "alpha_pow": 0.6,
+    "beta_pow": 0.7,
+    "eta_pow": 0.01,
+    "gamma_pow_reward": 0.3,
+    "gamma_pow_cost": 0.3,
+    "tau_reward": 1.0,
+    "tau_cost": 1.0,
+    "T": 500,
+    "grad_T": 500,
+    "num_new_data": 100,
+    "window": 10000,
+    "episode": 100,
+    "update_time_per_episode": 10,
+    "num_update_time": 1000,
+    "Q_update_time": 1,
+    "MAX_STEPS": 101000,
+    "ensemble_size": 5,
+    "beta_uncertainty": 0.0,
+    "bootstrap_mask_prob": 1.0,
+    "critic_lr_base": 0.1,
+    "critic_seed": 10000,
+    "ensemble_init_mode": "shared",
+    "cssca_solver": "lagrangian"
+  },
+  "objective": {
+    "final": 1.30348739606722,
+    "tail10_mean": 1.2874884391952544
+  },
+  "average_cost": {
+    "final": 1.0191767819937034,
+    "tail10_mean": 1.0319420129906844
+  },
+  "average_cost_violation": {
+    "final": -0.18082321800629653,
+    "tail10_mean": -0.16805798700931554
+  },
+  "worst_user_residual": {
+    "final": 0.15417696931808825,
+    "tail10_mean": 0.07257396934389727
+  },
+  "q_saturation_tail10_mean": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "q_used_batch_std_tail10_mean": [
+    1.2857782215213276,
+    2.632900744391607,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "grad_norm_objective_final": 1.5404297214026148,
+  "grad_norm_constraints_final": [
+    1.2927850139627906,
+    0.16943385935532343,
+    0.1694338593556637,
+    0.16943385928090027
+  ]
+}

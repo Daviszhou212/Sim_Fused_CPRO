@@ -31,7 +31,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg.ensemble_init_mode, "shared")
         self.assertEqual(cfg.bootstrap_mask_prob, 1.0)
         self.assertEqual(cfg.beta_uncertainty, 0.0)
-        self.assertEqual(cfg.critic_lr_base, 0.01)
+        self.assertEqual(cfg.critic_lr_base, 0.1)
         self.assertEqual(SLDAC_RUNS["b100_q1"], ("Bayesian SLDAC, batchsize=100, q=1", 500, 500, 100, 1))
         self.assertEqual(SLDAC_RUNS["b100_q10"], ("Bayesian SLDAC, batchsize=100, q=10", 500, 500, 100, 10))
         self.assertEqual(SLDAC_RUNS["b100_q5"], ("Bayesian SLDAC, batchsize=100, q=5", 500, 500, 100, 5))

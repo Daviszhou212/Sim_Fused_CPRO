@@ -1,0 +1,34 @@
+{
+  "run_tag": "b100_q1",
+  "note": "Reused existing legacy artifacts; no legacy simulation was run for this comparison.",
+  "sources": {
+    "legacy_existing_100ep": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\Bayesian_SLDAC_MIMO\\outputs\\compare_b100_q1_100ep_20260610_232929",
+    "legacy_sldac_code_60pt": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_code\\MIMO1",
+    "bayesian_tuned_100ep": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\Bayesian_SLDAC_MIMO\\outputs\\bayesian_best_lr001_b100_q1_100ep_20260611_003006"
+  },
+  "legacy_existing_100ep": {
+    "objective_final": 1.30348739606722,
+    "objective_tail10_mean": 1.2874884391952544,
+    "average_cost_final": 1.0191767819937034,
+    "average_cost_violation_final": -0.18082321800629653,
+    "average_cost_violation_tail10_mean": -0.16805798700931554,
+    "worst_residual_final": 0.15417696931808825,
+    "worst_residual_tail10_mean": 0.07257396934389727
+  },
+  "legacy_sldac_code_60pt": {
+    "objective_final": 1.5559751670647253,
+    "objective_tail10_mean": 1.5779688138574224,
+    "average_cost_final": 1.1995722066245667,
+    "average_cost_violation_final": -0.0004277933754333052,
+    "average_cost_violation_tail10_mean": -0.010336564241427103
+  },
+  "bayesian_tuned_100ep": {
+    "objective_final": 0.32188672019845593,
+    "objective_tail10_mean": 0.33886303200140955,
+    "average_cost_final": 1.2582473746452398,
+    "average_cost_violation_final": 0.05824737464523988,
+    "average_cost_violation_tail10_mean": 0.05696708768759555,
+    "worst_residual_final": 0.14288000152802455,
+    "worst_residual_tail10_mean": 0.18083597499169698
+  }
+}

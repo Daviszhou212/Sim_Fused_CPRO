@@ -40,7 +40,7 @@ class CriticNetMIMO(nn.Module):
         a1 = F.relu(self.fca1(action))
         x1 = torch.cat((s2, a1), dim=1)
         x2 = F.relu(self.fc2(x1))
-        return 200 * torch.tanh(self.fc3(x2))
+        return 10 * torch.tanh(0.001 * self.fc3(x2))
 
 
 class MLPGaussianMIMO(nn.Module):

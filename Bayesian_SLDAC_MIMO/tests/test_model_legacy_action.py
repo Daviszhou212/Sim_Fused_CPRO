@@ -47,7 +47,7 @@ class LegacyActionModelTest(unittest.TestCase):
 
         value = critic(state, action)
 
-        expected = 200.0 * torch.tanh(torch.tensor([[0.5]], dtype=torch.float32))
+        expected = 10.0 * torch.tanh(0.001 * torch.tensor([[0.5]], dtype=torch.float32))
         torch.testing.assert_close(value, expected)
 
 
