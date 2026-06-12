@@ -14,9 +14,9 @@ def build_default_config():
         # 场景规模：默认对齐 SLDAC_code/MIMO1 的正式样本量；快速检查应在测试或临时 runner 中覆盖为 smoke 规模。
         "seed": 0,
         "device": "cpu",
-        "nt": 4,
+        "nt": 8,
         "cell_count": 3,
-        "users_per_cell": 2,
+        "users_per_cell": 4,
         "constraint_limit": 1.2,
         "arrival_upper": 2.0,
         "queue_max": 5.0,
@@ -41,7 +41,7 @@ def build_default_config():
         # Critic TD target 固定使用 SLDAC 源码兼容口径：bootstrap 来自平滑 target critic。
         "critic_target_mode": "source_compatible",
         "critic_backend": "centralized",
-        # CTDE centralized critic 输出尺度；auto 按小区数扩展原始 MIMO 的 10*tanh bound。
+        # CTDE centralized critic 输出尺度；auto 使用 power_max * cell_count * users_per_cell。
         "centralized_critic_output_scale": "auto",
         "actor_parameterization": "shared",
         "log_std_mode": "joint",

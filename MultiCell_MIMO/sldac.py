@@ -73,7 +73,7 @@ def _build_cost_vector(objective_cost, info, constraint_dim, constraint_limit):
 def _resolve_centralized_critic_output_scale(config, env):
     configured = config.get("centralized_critic_output_scale", "auto")
     if isinstance(configured, str) and configured.strip().lower() == "auto":
-        return 10.0 * float(max(1, int(env.cell_count)))
+        return float(config["power_max"]) * float(env.cell_count) * float(env.users_per_cell)
     return float(configured)
 
 

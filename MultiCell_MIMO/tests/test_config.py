@@ -12,6 +12,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config["critic_target_mode"], "source_compatible")
         self.assertEqual(config["actor_parameterization"], "shared")
         self.assertEqual(config["log_std_mode"], "joint")
+        self.assertEqual(config["nt"], 8)
+        self.assertEqual(config["users_per_cell"], 4)
         self.assertEqual(config["action_interface"], "snr_db")
         self.assertEqual(config["log_std_min"], -5.0)
         self.assertEqual(config["log_std_max"], 2.0)
@@ -26,6 +28,8 @@ class ConfigTest(unittest.TestCase):
 
         config = build_default_config()
 
+        self.assertEqual(config["nt"], 8)
+        self.assertEqual(config["users_per_cell"], 4)
         self.assertEqual(config["episode"], 60)
         self.assertEqual(config["update_time_per_episode"], 10)
         self.assertEqual(config["t_horizon"], 500)

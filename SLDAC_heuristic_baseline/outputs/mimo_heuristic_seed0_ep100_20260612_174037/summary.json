@@ -1,0 +1,26 @@
+{
+  "source_environment": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_code\\MIMO1",
+  "policy": "queue_aware_heuristic_action",
+  "seed": 0,
+  "episode_count": 100,
+  "steps_per_episode": 1000,
+  "num_steps": 100000,
+  "config": {
+    "min_power_per_user": 0.02,
+    "max_power_per_user": 2.5,
+    "max_total_power": 3.0,
+    "idle_total_power": 0.2,
+    "queue_priority_floor": 0.05,
+    "delay_max": 5.0,
+    "pressure_exponent": 0.7,
+    "reg_factor": 1.0
+  },
+  "num_points": 100,
+  "final_objective_cost_sum_power": 1.6026189902086232,
+  "final_avg_delay_per_user": 0.9302272455113842,
+  "mean_last_10_objective_cost_sum_power": 1.3755635133957547,
+  "mean_last_10_avg_delay_per_user": 0.6671599206613845,
+  "files": {
+    "csv": "C:\\Users\\Admin\\Desktop\\Sim_Fused_CPRO\\SLDAC_heuristic_baseline\\outputs\\mimo_heuristic_seed0_ep100_20260612_174037\\mimo_heuristic_metrics.csv"
+  }
+}
