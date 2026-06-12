@@ -18,6 +18,7 @@ class ConfigTest(unittest.TestCase):
         self.assertLess(config["log_std_min"], config["log_std_max"])
         self.assertEqual(config["run_id"], "")
         self.assertEqual(config["allow_overwrite"], 0)
+        self.assertEqual(config["log_interval_episodes"], 10)
 
     def test_default_sample_scale_matches_sldac_code_mimo1(self):
         from MultiCell_MIMO.config import build_default_config

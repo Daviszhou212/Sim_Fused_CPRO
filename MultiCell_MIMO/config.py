@@ -52,8 +52,10 @@ def build_default_config():
         # 输出隔离：正式入口只能写入 MultiCell_MIMO 内部路径。
         "output_root": "MultiCell_MIMO/outputs",
         "checkpoint_root": "MultiCell_MIMO/checkpoints",
+        # 进度与检查点：长仿真按 episode 间隔打印，并可按需保存最终 checkpoint。
         "save_final_checkpoint": 1,
         "checkpoint_interval_episodes": 10,
+        "log_interval_episodes": 10,
         "run_tag": "multicell_sldac",
         "run_id": "",
         "allow_overwrite": 0,
@@ -77,6 +79,7 @@ def validate_config(config):
     config.setdefault("run_id", "")
     config.setdefault("allow_overwrite", 0)
     config.setdefault("action_interface", "snr_db")
+    config.setdefault("log_interval_episodes", 10)
     if config["critic_backend"] not in CRITIC_BACKENDS:
         raise ValueError("unsupported critic_backend: {0}".format(config["critic_backend"]))
     if config["critic_target_mode"] not in CRITIC_TARGET_MODES:
@@ -101,6 +104,7 @@ def validate_config(config):
         "num_new_data",
         "q_update_time",
         "window",
+        "log_interval_episodes",
     ):
         if int(config[key]) <= 0:
             raise ValueError("{0} must be positive".format(key))

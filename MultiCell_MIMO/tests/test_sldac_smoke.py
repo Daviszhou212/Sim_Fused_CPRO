@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 import numpy as np
@@ -36,7 +38,8 @@ class SldacSmokeTest(unittest.TestCase):
                 }
             )
             config.update(overrides)
-            result = run_sldac(config)
+            with redirect_stdout(StringIO()):
+                result = run_sldac(config)
 
             self.assertEqual(len(result["objective_history"]), 1)
             self.assertEqual(len(result["cost_history"]), 1)
@@ -54,6 +57,46 @@ class SldacSmokeTest(unittest.TestCase):
 
     def test_sldac_smoke_runs_with_tree_critic_and_snr_db_action(self):
         self._run_tiny_sldac({"critic_backend": "tree", "action_interface": "snr_db"})
+
+    def test_sldac_prints_progress_on_configured_episode_interval(self):
+        from MultiCell_MIMO.config import build_default_config
+        from MultiCell_MIMO.sldac import run_sldac
+
+        with tempfile.TemporaryDirectory() as output_root, tempfile.TemporaryDirectory() as checkpoint_root:
+            config = build_default_config()
+            config.update(
+                {
+                    "seed": 7,
+                    "device": "cpu",
+                    "nt": 2,
+                    "cell_count": 2,
+                    "users_per_cell": 1,
+                    "episode": 2,
+                    "update_time_per_episode": 1,
+                    "t_horizon": 3,
+                    "grad_batch_size": 3,
+                    "num_new_data": 1,
+                    "q_update_time": 1,
+                    "window": 20,
+                    "hidden_dims": (8,),
+                    "critic_hidden_dims": (8,),
+                    "save_final_checkpoint": 0,
+                    "output_root": output_root,
+                    "checkpoint_root": checkpoint_root,
+                    "run_id": "progress_log",
+                    "log_interval_episodes": 1,
+                }
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                run_sldac(config)
+
+        text = stdout.getvalue()
+        self.assertIn("SLDAC_EPISODE: 1/2", text)
+        self.assertIn("SLDAC_EPISODE: 2/2", text)
+        self.assertIn("objective_average:", text)
+        self.assertIn("cost_average:", text)
+        self.assertIn("action_interface: snr_db", text)
 
     def test_tree_critic_checkpoint_records_tree_modules(self):
         from MultiCell_MIMO.config import build_default_config
@@ -83,7 +126,8 @@ class SldacSmokeTest(unittest.TestCase):
                     "run_id": "tree_checkpoint",
                 }
             )
-            run_sldac(config)
+            with redirect_stdout(StringIO()):
+                run_sldac(config)
             checkpoint_paths = list(Path(checkpoint_root).rglob("*.pt"))
             self.assertEqual(len(checkpoint_paths), 1)
             payload = torch.load(checkpoint_paths[0], map_location="cpu")

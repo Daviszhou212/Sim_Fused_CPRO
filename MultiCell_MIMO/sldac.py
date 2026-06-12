@@ -37,6 +37,21 @@ def _resolve_run_id(config):
     return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
 
+def _should_log_episode(current_episode, total_episodes, log_interval_episodes):
+    current = int(current_episode)
+    total = int(total_episodes)
+    interval = int(log_interval_episodes)
+    return current == 1 or current == total or current % interval == 0
+
+
+def _print_episode_progress(config, current_episode, total_episodes, objective_average, cost_average):
+    print("SLDAC_EPISODE: {0}/{1}".format(int(current_episode), int(total_episodes)), flush=True)
+    print("objective_average:", float(objective_average), flush=True)
+    print("cost_average:", float(cost_average), flush=True)
+    print("critic_backend:", str(config["critic_backend"]), flush=True)
+    print("action_interface:", str(config["action_interface"]), flush=True)
+
+
 def _build_cost_vector(objective_cost, info, constraint_dim, constraint_limit):
     costs = np.zeros((1 + int(constraint_dim),), dtype=np.float64)
     costs[0] = float(objective_cost)
@@ -192,6 +207,7 @@ def run_sldac(config):
     critic_update_interval = int(num_new_data // q_update_time)
     update_time_per_episode = int(config["update_time_per_episode"])
     episode_count = int(config["episode"])
+    log_interval_episodes = int(config["log_interval_episodes"])
     num_update_time = episode_count * update_time_per_episode
     max_steps = 2 * t_horizon + num_update_time * num_new_data + q_update_time + 1
     buffer = LegacySLDACBuffer(
@@ -256,6 +272,15 @@ def run_sldac(config):
         if update_index % update_time_per_episode == 0 and q_update_index == 1:
             objective_history.append(float(np.mean(aver_objective)))
             cost_history.append(float(np.mean(aver_cost)))
+            current_episode = len(objective_history)
+            if _should_log_episode(current_episode, episode_count, log_interval_episodes):
+                _print_episode_progress(
+                    config,
+                    current_episode,
+                    episode_count,
+                    objective_history[-1],
+                    cost_history[-1],
+                )
 
         batch_start = max(0, 2 * t_horizon - grad_batch_size)
         state_batch = states_all[batch_start : 2 * t_horizon]
