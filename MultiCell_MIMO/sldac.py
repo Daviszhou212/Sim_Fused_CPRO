@@ -25,9 +25,9 @@ def multicell_power_action_to_db_action(action, env):
 
 
 def multicell_buffer_action_from_info(action, info, action_interface):
-    if str(action_interface) != "snr_db":
-        return action
-    return np.asarray(info["executed_power_action"], dtype=np.float64).reshape(-1).copy()
+    if "executed_power_action" in info:
+        return np.asarray(info["executed_power_action"], dtype=np.float64).reshape(-1).copy()
+    return np.asarray(action, dtype=np.float64).reshape(-1).copy()
 
 
 def _resolve_run_id(config):
@@ -148,7 +148,7 @@ def _estimate_actor_gradients(actor, critic, env, state_batch, action_batch, con
     theta_dim = int(actor.flatten_parameters().numel())
     grad = torch.zeros((1 + int(constraint_dim), theta_dim), dtype=torch.float32, device=device)
     for head_idx in range(1 + int(constraint_dim)):
-        actor.zero_grad(set_to_none=True)
+        actor.clear_policy_grad(set_to_none=True)
         # Match SLDAC_code: use the joint action log-prob directly.
         log_prob = actor.evaluate_action(local_state, action_torch)
         loss = (q_hat[:, head_idx].detach() * log_prob).mean()

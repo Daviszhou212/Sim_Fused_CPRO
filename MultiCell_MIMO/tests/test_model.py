@@ -107,8 +107,11 @@ class ModelTest(unittest.TestCase):
         self.assertIsNotNone(actor.log_std.grad)
         first_grad = actor.log_std.grad.detach().clone()
 
-        actor.zero_grad()
-        self.assertIsNotNone(actor.log_std.grad)
+        actor.clear_policy_grad(set_to_none=True)
+        self.assertIsNone(actor.log_std.grad)
+
+        loss = actor.evaluate_action(local_states, action).mean()
+        loss.backward()
         self.assertTrue(torch.allclose(actor.log_std.grad, first_grad))
 
         actor.sample_action(local_states[0], use_mean=False)

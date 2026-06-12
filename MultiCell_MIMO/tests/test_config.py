@@ -12,7 +12,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config["critic_target_mode"], "source_compatible")
         self.assertEqual(config["actor_parameterization"], "shared")
         self.assertEqual(config["log_std_mode"], "joint")
-        self.assertEqual(config["action_interface"], "legacy_power")
+        self.assertEqual(config["action_interface"], "snr_db")
         self.assertEqual(config["log_std_min"], -5.0)
         self.assertEqual(config["log_std_max"], 2.0)
         self.assertLess(config["log_std_min"], config["log_std_max"])

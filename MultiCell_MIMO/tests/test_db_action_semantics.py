@@ -57,7 +57,7 @@ class MultiCellDbActionSemanticsTest(unittest.TestCase):
         np.testing.assert_allclose(db_info["executed_power_action"], expected_executed_power, rtol=1e-12, atol=1e-12)
         np.testing.assert_allclose(buffer_action, expected_executed_power, rtol=1e-12, atol=1e-12)
 
-    def test_legacy_buffer_action_keeps_original_action_object(self):
+    def test_legacy_buffer_action_uses_executed_action_to_match_sldac_code(self):
         from MultiCell_MIMO.sldac import multicell_buffer_action_from_info
 
         action = np.array([-1.0, 0.5, 0.2], dtype=np.float64)
@@ -65,7 +65,7 @@ class MultiCellDbActionSemanticsTest(unittest.TestCase):
 
         buffer_action = multicell_buffer_action_from_info(action, info, "legacy_power")
 
-        np.testing.assert_array_equal(buffer_action, action)
+        np.testing.assert_array_equal(buffer_action, info["executed_power_action"])
 
 
 if __name__ == "__main__":

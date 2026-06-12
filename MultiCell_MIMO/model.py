@@ -144,6 +144,15 @@ class SharedLocalGaussianActor(nn.Module):
             parts.append(self.log_std.grad.reshape(-1))
         return torch.cat(parts)
 
+    def clear_policy_grad(self, set_to_none=False):
+        self.zero_grad(set_to_none=set_to_none)
+        if self.log_std.grad is None:
+            return
+        if set_to_none:
+            self.log_std.grad = None
+        else:
+            self.log_std.grad.zero_()
+
     def restore_parameters(self, flat_parameters):
         flat = torch.as_tensor(flat_parameters, dtype=torch.float32, device=self.device).reshape(-1)
         offset = 0

@@ -1,0 +1,36 @@
+{
+  "legacy_dir": "MultiCell_MIMO\\outputs\\SLDAC\\legacy_tree100_20260612_102741",
+  "db_action_dir": "MultiCell_MIMO\\outputs\\SLDAC\\db_action_tree100_20260612_102741",
+  "legacy_tree": {
+    "episodes": 100,
+    "objective_last": 13.093302217807215,
+    "objective_mean": 8.925295949620722,
+    "objective_last10_mean": 12.076754172051695,
+    "objective_last20_mean": 11.503988074625369,
+    "cost_last": 0.22024862617312307,
+    "cost_mean": 0.44839748944899205,
+    "cost_last10_mean": 0.34876331530265475,
+    "cost_last20_mean": 0.3575806880820589
+  },
+  "db_action": {
+    "episodes": 100,
+    "objective_last": 4.230276787160444,
+    "objective_mean": 5.47246541827998,
+    "objective_last10_mean": 3.549306188416184,
+    "objective_last20_mean": 3.3105249390613034,
+    "cost_last": 0.5053783845707638,
+    "cost_mean": 0.37196399440236516,
+    "cost_last10_mean": 0.7462310414077817,
+    "cost_last20_mean": 0.7070046854099468
+  },
+  "deltas_db_minus_legacy": {
+    "objective_last_db_minus_legacy": -8.863025430646772,
+    "objective_mean_db_minus_legacy": -3.4528305313407417,
+    "objective_last10_mean_db_minus_legacy": -8.527447983635511,
+    "objective_last20_mean_db_minus_legacy": -8.193463135564066,
+    "cost_last_db_minus_legacy": 0.2851297583976407,
+    "cost_mean_db_minus_legacy": -0.07643349504662689,
+    "cost_last10_mean_db_minus_legacy": 0.397467726105127,
+    "cost_last20_mean_db_minus_legacy": 0.34942399732788787
+  }
+}

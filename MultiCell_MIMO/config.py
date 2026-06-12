@@ -21,7 +21,7 @@ def build_default_config():
         "arrival_upper": 2.0,
         "queue_max": 5.0,
         "power_max": 2.5,
-        "action_interface": "legacy_power",
+        "action_interface": "snr_db",
         # 训练步数：保持顶部配置优先，避免 CLI 意外覆盖正式实验设置。
         "episode": 2,
         "update_time_per_episode": 2,
@@ -76,7 +76,7 @@ def validate_config(config):
     config.setdefault("q_update_time", 1)
     config.setdefault("run_id", "")
     config.setdefault("allow_overwrite", 0)
-    config.setdefault("action_interface", "legacy_power")
+    config.setdefault("action_interface", "snr_db")
     if config["critic_backend"] not in CRITIC_BACKENDS:
         raise ValueError("unsupported critic_backend: {0}".format(config["critic_backend"]))
     if config["critic_target_mode"] not in CRITIC_TARGET_MODES:
