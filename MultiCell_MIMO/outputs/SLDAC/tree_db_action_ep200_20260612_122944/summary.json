@@ -1,0 +1,80 @@
+{
+  "elapsed_sec": 300.957829,
+  "episodes": 200,
+  "objective_first5": [
+    7.669033279962407,
+    7.995275284066583,
+    8.21738823991237,
+    8.407693445982622,
+    8.570479611993033
+  ],
+  "objective_last5": [
+    9.466605025040701,
+    9.548326704131934,
+    9.64178390349699,
+    9.74341201786872,
+    9.890927724250759
+  ],
+  "cost_first5": [
+    0.11814965634039352,
+    0.11895123710774971,
+    0.12247871354032085,
+    0.1245103599678352,
+    0.12349421563204048
+  ],
+  "cost_last5": [
+    0.4749009122429192,
+    0.47729862409252727,
+    0.4711184210117002,
+    0.4656876461492188,
+    0.45029586255664833
+  ],
+  "objective_mean": 5.25625816854907,
+  "objective_last": 9.890927724250759,
+  "objective_min": 2.0106959292069737,
+  "objective_max": 9.890927724250759,
+  "objective_last10_mean": 9.412956417578751,
+  "objective_last20_mean": 8.980663860624201,
+  "objective_last50_mean": 7.653138899225849,
+  "cost_mean": 0.47108008670926327,
+  "cost_last": 0.45029586255664833,
+  "cost_min": 0.11814965634039352,
+  "cost_max": 0.7829190000791658,
+  "cost_last10_mean": 0.47675029050656226,
+  "cost_last20_mean": 0.4743757690002696,
+  "cost_last50_mean": 0.5049136255315877,
+  "func_value": [
+    9.449886699630152,
+    -1.1731732867101934,
+    -1.1301077577662935,
+    -1.1785386161176303,
+    -1.1016284217759453,
+    0.8761956522103733,
+    -0.7078205471866305
+  ],
+  "output_dir": "MultiCell_MIMO\\outputs\\SLDAC\\tree_db_action_ep200_20260612_122944",
+  "mat": "MultiCell_MIMO\\outputs\\SLDAC\\tree_db_action_ep200_20260612_122944\\curves.mat",
+  "csv": "MultiCell_MIMO\\outputs\\SLDAC\\tree_db_action_ep200_20260612_122944\\metrics.csv",
+  "config": {
+    "seed": 0,
+    "device": "cpu",
+    "critic_backend": "tree",
+    "action_interface": "snr_db",
+    "episode": 200,
+    "update_time_per_episode": 10,
+    "t_horizon": 500,
+    "grad_batch_size": 500,
+    "num_new_data": 100,
+    "q_update_time": 1,
+    "window": 10000,
+    "cssca_solver": "lagrangian_dual",
+    "log_std_min": -5.0,
+    "log_std_max": 2.0,
+    "constraint_limit": 1.2,
+    "tree_message_dim": 32,
+    "run_tag": "multicell_tree_db_action",
+    "run_id": "tree_db_action_ep200_20260612_122944"
+  },
+  "png": "MultiCell_MIMO\\outputs\\SLDAC\\tree_db_action_ep200_20260612_122944\\curves.png",
+  "pdf": "MultiCell_MIMO\\outputs\\SLDAC\\tree_db_action_ep200_20260612_122944\\curves.pdf"
+}

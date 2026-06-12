@@ -24,8 +24,11 @@ def _build_q_net(input_dim, hidden_dims):
 
 
 class LegacyMIMOCriticNet(nn.Module):
-    def __init__(self, state_dim, action_dim):
+    def __init__(self, state_dim, action_dim, output_scale=10.0):
         super().__init__()
+        self.output_scale = float(output_scale)
+        if self.output_scale <= 0.0:
+            raise ValueError("output_scale must be positive")
         self.fcs1 = nn.Linear(int(state_dim), 256)
         self.fcs1.weight.data = _fanin_init(self.fcs1.weight.data.size())
         self.fcs2 = nn.Linear(256, 128)
@@ -43,11 +46,11 @@ class LegacyMIMOCriticNet(nn.Module):
         action_feature = F.relu(self.fca1(action))
         joint_feature = torch.cat((state_feature, action_feature), dim=1)
         joint_feature = F.relu(self.fc2(joint_feature))
-        return 10.0 * torch.tanh(0.001 * self.fc3(joint_feature))
+        return self.output_scale * torch.tanh(0.001 * self.fc3(joint_feature))
 
 
 class LegacyMultiHeadDifferentialCritic:
-    def __init__(self, state_dim, action_dim, constraint_dim, q_update_time, device="cpu"):
+    def __init__(self, state_dim, action_dim, constraint_dim, q_update_time, device="cpu", output_scale=10.0):
         self.state_dim = int(state_dim)
         self.action_dim = int(action_dim)
         self.constraint_dim = int(constraint_dim)
@@ -55,13 +58,16 @@ class LegacyMultiHeadDifferentialCritic:
         self.q_update_time = int(q_update_time)
         if self.q_update_time <= 0:
             raise ValueError("q_update_time must be positive")
+        self.output_scale = float(output_scale)
+        if self.output_scale <= 0.0:
+            raise ValueError("output_scale must be positive")
         self.device = torch.device(device)
         self.learning_rate = 0.1 / (self.q_update_time ** 0.5)
         self.heads = nn.ModuleList(
-            [LegacyMIMOCriticNet(self.state_dim, self.action_dim) for _ in range(self.cost_dim)]
+            [LegacyMIMOCriticNet(self.state_dim, self.action_dim, self.output_scale) for _ in range(self.cost_dim)]
         ).to(self.device)
         self.target_heads = nn.ModuleList(
-            [LegacyMIMOCriticNet(self.state_dim, self.action_dim) for _ in range(self.cost_dim)]
+            [LegacyMIMOCriticNet(self.state_dim, self.action_dim, self.output_scale) for _ in range(self.cost_dim)]
         ).to(self.device)
         for target, source in zip(self.target_heads, self.heads):
             target.load_state_dict(source.state_dict())

@@ -41,6 +41,8 @@ def build_default_config():
         # Critic TD target 固定使用 SLDAC 源码兼容口径：bootstrap 来自平滑 target critic。
         "critic_target_mode": "source_compatible",
         "critic_backend": "centralized",
+        # CTDE centralized critic 输出尺度；auto 按小区数扩展原始 MIMO 的 10*tanh bound。
+        "centralized_critic_output_scale": "auto",
         "actor_parameterization": "shared",
         "log_std_mode": "joint",
         "log_std_min": -5.0,
@@ -80,6 +82,7 @@ def validate_config(config):
     config.setdefault("allow_overwrite", 0)
     config.setdefault("action_interface", "snr_db")
     config.setdefault("log_interval_episodes", 10)
+    config.setdefault("centralized_critic_output_scale", "auto")
     if config["critic_backend"] not in CRITIC_BACKENDS:
         raise ValueError("unsupported critic_backend: {0}".format(config["critic_backend"]))
     if config["critic_target_mode"] not in CRITIC_TARGET_MODES:
@@ -111,6 +114,13 @@ def validate_config(config):
     for key in ("constraint_limit", "arrival_upper", "queue_max", "power_max"):
         if float(config[key]) <= 0.0:
             raise ValueError("{0} must be positive".format(key))
+    critic_scale = config["centralized_critic_output_scale"]
+    if isinstance(critic_scale, str) and critic_scale.strip().lower() == "auto":
+        config["centralized_critic_output_scale"] = "auto"
+    else:
+        config["centralized_critic_output_scale"] = float(critic_scale)
+        if float(config["centralized_critic_output_scale"]) <= 0.0:
+            raise ValueError("centralized_critic_output_scale must be positive or auto")
     if float(config["log_std_min"]) >= float(config["log_std_max"]):
         raise ValueError("log_std_min must be smaller than log_std_max")
     if int(config["tree_message_dim"]) <= 0:

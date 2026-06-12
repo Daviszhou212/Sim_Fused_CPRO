@@ -67,6 +67,51 @@ class MultiCellDbActionSemanticsTest(unittest.TestCase):
 
         np.testing.assert_array_equal(buffer_action, info["executed_power_action"])
 
+    def test_snr_db_next_action_for_critic_uses_executed_power_action(self):
+        from MultiCell_MIMO.environment import ACTION_EPS, MultiCellMIMOEnv
+        from MultiCell_MIMO.sldac import _sample_next_actions
+
+        class FixedActor:
+            def __init__(self, action):
+                self.action = np.asarray(action, dtype=np.float64)
+
+            def sample_action(self, local_next, use_mean=False):
+                _ = local_next, use_mean
+                return self.action.copy()
+
+        env = MultiCellMIMOEnv(
+            seed=17,
+            nt=2,
+            cell_count=2,
+            users_per_cell=2,
+            action_interface="snr_db",
+        )
+        next_state = env.reset().copy()
+        raw_power_action = np.array(
+            [
+                -1.0,
+                env.noise_power / 10.0,
+                -2.0,
+                0.5,
+                99.0,
+                0.2,
+            ],
+            dtype=np.float64,
+        )
+
+        next_actions = _sample_next_actions(
+            FixedActor(raw_power_action),
+            env,
+            np.stack([next_state], axis=0),
+            action_interface="snr_db",
+        )
+
+        expected_executed_power = np.array(
+            [[ACTION_EPS, ACTION_EPS, ACTION_EPS, 0.5, 99.0, 0.2]],
+            dtype=np.float64,
+        )
+        np.testing.assert_allclose(next_actions, expected_executed_power, rtol=1e-12, atol=1e-12)
+
 
 if __name__ == "__main__":
     unittest.main()

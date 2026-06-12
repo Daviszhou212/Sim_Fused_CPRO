@@ -100,6 +100,29 @@ class CriticTest(unittest.TestCase):
         self.assertAlmostEqual(critic.optimizers[0].param_groups[0]["lr"], 0.05)
         self.assertTrue(all(value >= 0.0 for value in losses))
 
+    def test_ctde_critic_auto_output_scale_expands_with_cell_count(self):
+        from MultiCell_MIMO.config import build_default_config, validate_config
+        from MultiCell_MIMO.environment import MultiCellMIMOEnv
+        from MultiCell_MIMO.sldac import _build_critic
+
+        config = build_default_config()
+        config = validate_config(config)
+        env = MultiCellMIMOEnv(
+            seed=config["seed"],
+            nt=config["nt"],
+            cell_count=config["cell_count"],
+            users_per_cell=config["users_per_cell"],
+            arrival_upper=config["arrival_upper"],
+            queue_max=config["queue_max"],
+            action_interface=config["action_interface"],
+        )
+        critic = _build_critic(config, env, device="cpu")
+
+        self.assertEqual(critic.output_scale, 30.0)
+        value = critic.critic_value(torch.randn(5, env.state_dim), torch.randn(5, env.action_dim), use_target=True)
+        self.assertLessEqual(float(value.max()), 30.0)
+        self.assertGreaterEqual(float(value.min()), -30.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config["log_std_min"], -5.0)
         self.assertEqual(config["log_std_max"], 2.0)
         self.assertLess(config["log_std_min"], config["log_std_max"])
+        self.assertEqual(config["centralized_critic_output_scale"], "auto")
         self.assertEqual(config["run_id"], "")
         self.assertEqual(config["allow_overwrite"], 0)
         self.assertEqual(config["log_interval_episodes"], 10)
@@ -50,6 +51,18 @@ class ConfigTest(unittest.TestCase):
 
         config = build_default_config()
         config["critic_target_mode"] = "tex_strict"
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_centralized_critic_output_scale_accepts_auto_or_positive_numeric(self):
+        from MultiCell_MIMO.config import build_default_config, validate_config
+
+        config = build_default_config()
+        config["centralized_critic_output_scale"] = 25.0
+        self.assertEqual(validate_config(config)["centralized_critic_output_scale"], 25.0)
+
+        config = build_default_config()
+        config["centralized_critic_output_scale"] = 0.0
         with self.assertRaises(ValueError):
             validate_config(config)
 

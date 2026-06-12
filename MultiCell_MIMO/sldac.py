@@ -30,6 +30,16 @@ def multicell_buffer_action_from_info(action, info, action_interface):
     return np.asarray(action, dtype=np.float64).reshape(-1).copy()
 
 
+def multicell_actor_action_to_critic_action(action, env, action_interface):
+    env_action = (
+        multicell_power_action_to_db_action(action, env)
+        if str(action_interface) == "snr_db"
+        else np.asarray(action, dtype=np.float64).reshape(-1).copy()
+    )
+    _, _, executed_action = env._decode_action(env_action)
+    return np.asarray(executed_action, dtype=np.float64).reshape(-1).copy()
+
+
 def _resolve_run_id(config):
     configured = str(config.get("run_id", "")).strip()
     if configured:
@@ -60,11 +70,19 @@ def _build_cost_vector(objective_cost, info, constraint_dim, constraint_limit):
     return costs
 
 
-def _sample_next_actions(actor, env, next_state_batch):
+def _resolve_centralized_critic_output_scale(config, env):
+    configured = config.get("centralized_critic_output_scale", "auto")
+    if isinstance(configured, str) and configured.strip().lower() == "auto":
+        return 10.0 * float(max(1, int(env.cell_count)))
+    return float(configured)
+
+
+def _sample_next_actions(actor, env, next_state_batch, action_interface="legacy_power"):
     actions = []
     for next_state in np.asarray(next_state_batch, dtype=np.float64):
         local_next = env.local_actor_observations_from_state(next_state)
-        actions.append(actor.sample_action(local_next, use_mean=False))
+        raw_action = actor.sample_action(local_next, use_mean=False)
+        actions.append(multicell_actor_action_to_critic_action(raw_action, env, action_interface))
     return np.asarray(actions, dtype=np.float64)
 
 
@@ -76,6 +94,7 @@ def _build_critic(config, env, device):
             constraint_dim=env.constraint_dim,
             q_update_time=int(config["q_update_time"]),
             device=device,
+            output_scale=_resolve_centralized_critic_output_scale(config, env),
         )
     if config["critic_backend"] == "tree":
         return TreeMessageDifferentialCritic(
@@ -287,7 +306,7 @@ def run_sldac(config):
         action_batch = actions_all[batch_start : 2 * t_horizon]
         costs_batch = costs_all[batch_start : 2 * t_horizon]
         next_state_batch = next_states_all[batch_start : 2 * t_horizon]
-        next_action_batch = _sample_next_actions(actor, env, next_state_batch)
+        next_action_batch = _sample_next_actions(actor, env, next_state_batch, config["action_interface"])
         _update_critic(
             critic=critic,
             env=env,
