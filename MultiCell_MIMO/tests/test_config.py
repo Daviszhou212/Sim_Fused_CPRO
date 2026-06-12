@@ -19,6 +19,19 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config["run_id"], "")
         self.assertEqual(config["allow_overwrite"], 0)
 
+    def test_default_sample_scale_matches_sldac_code_mimo1(self):
+        from MultiCell_MIMO.config import build_default_config
+
+        config = build_default_config()
+
+        self.assertEqual(config["episode"], 60)
+        self.assertEqual(config["update_time_per_episode"], 10)
+        self.assertEqual(config["t_horizon"], 500)
+        self.assertEqual(config["grad_batch_size"], 500)
+        self.assertEqual(config["num_new_data"], 100)
+        self.assertEqual(config["q_update_time"], 1)
+        self.assertEqual(config["window"], 10000)
+
     def test_invalid_enum_values_raise(self):
         from MultiCell_MIMO.config import build_default_config, validate_config
 

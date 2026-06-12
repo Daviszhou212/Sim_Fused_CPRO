@@ -11,7 +11,7 @@ ACTION_INTERFACES = ("legacy_power", "snr_db")
 
 def build_default_config():
     return {
-        # 场景规模：默认使用很小的 smoke 规模，正式实验可在入口文件顶部改大。
+        # 场景规模：默认对齐 SLDAC_code/MIMO1 的正式样本量；快速检查应在测试或临时 runner 中覆盖为 smoke 规模。
         "seed": 0,
         "device": "cpu",
         "nt": 4,
@@ -22,14 +22,14 @@ def build_default_config():
         "queue_max": 5.0,
         "power_max": 2.5,
         "action_interface": "snr_db",
-        # 训练步数：保持顶部配置优先，避免 CLI 意外覆盖正式实验设置。
-        "episode": 2,
-        "update_time_per_episode": 2,
-        "t_horizon": 8,
-        "grad_batch_size": 8,
-        "num_new_data": 4,
+        # 训练步数：与 SLDAC_code/MIMO1 默认入口保持一致；入口脚本主要通过本文件配置。
+        "episode": 60,
+        "update_time_per_episode": 10,
+        "t_horizon": 500,
+        "grad_batch_size": 500,
+        "num_new_data": 100,
         "q_update_time": 1,
-        "window": 1000,
+        "window": 10000,
         # SLDAC 时间尺度超参数；gamma 是 critic averaging step，不是折扣因子。
         "alpha_pow": 0.6,
         "beta_pow": 0.7,
